@@ -10,7 +10,7 @@
 
 ## Safe reporting
 
-Never paste credentials/key values, `.env`, settings, database, or manifest contents, personal records, raw secret-scan excerpts, or raw command lines into this report. Record exit codes/counts, redacted or environment-relative paths (for example, `%LOCALAPPDATA%\\easy-rewind\\legacy-backup\\<timestamp>`), commit/artifact references, and private incident-record references only.
+Never paste credentials/key values, `.env`, settings, database, or manifest contents, personal records, or raw secret-scan excerpts into this report. Exact sanitized commands with environment-relative arguments are permitted; unsanitized command lines containing secrets or personal paths are prohibited. Record exit codes/counts, redacted or environment-relative paths (for example, `%LOCALAPPDATA%\easy-rewind\legacy-backup\<timestamp>`), commit/artifact references, and private incident-record references only.
 
 ## Safety preflight
 
@@ -42,14 +42,14 @@ Never paste credentials/key values, `.env`, settings, database, or manifest cont
 
 | Forbidden target | Complete | Result | Safe evidence reference |
 | --- | --- | --- | --- |
-| DB | - [ ] |  |  |
-| WAL | - [ ] |  |  |
-| SHM | - [ ] |  |  |
-| Settings | - [ ] |  |  |
-| Real `.env` | - [ ] |  |  |
-| Nested `backend/.git` | - [ ] |  |  |
-| Generated `node_modules` before clean install | - [ ] |  |  |
-| Obsolete temporary script | - [ ] |  |  |
+| `backend/data/easy-rewind.db` | - [ ] |  |  |
+| `backend/data/easy-rewind.db-wal` | - [ ] |  |  |
+| `backend/data/easy-rewind.db-shm` | - [ ] |  |  |
+| `backend/data/settings.json` | - [ ] |  |  |
+| `backend/.env` | - [ ] |  |  |
+| `backend/.git` | - [ ] |  |  |
+| Generated `node_modules` before install | - [ ] |  |  |
+| `tmp_test.js` | - [ ] |  |  |
 
 ## Workspace evidence
 
@@ -78,11 +78,11 @@ Never paste credentials/key values, `.env`, settings, database, or manifest cont
 
 | Action | Complete | Status (`pending`/`blocked`/`verified`) | Verified UTC | Operator/reference | Safe evidence |
 | --- | --- | --- | --- | --- | --- |
-| Exposed Gemini key revoked | - [ ] |  |  |  | Private incident-record reference only; the key itself is never recorded |
-| Replacement key not stored in repository or quarantine | - [ ] |  |  |  | Private incident-record reference only; the key itself is never recorded |
-| Git-history rewrite performed separately | - [ ] |  |  |  | Commit/artifact or private incident-record reference only |
+| Exposed Gemini key revoked | - [ ] | `pending` |  |  | Private incident-record reference only; the key itself is never recorded |
+| Replacement key not stored in repository or quarantine | - [ ] | `pending` |  |  | Private incident-record reference only; the key itself is never recorded |
+| Git-history rewrite performed separately | - [ ] | `pending` |  |  | Commit/artifact or private incident-record reference only |
 
-The rewrite is separate. `scheduled` is not `verified`. Pending or blocked Gemini revocation or Git-history remediation forces the Stage 1 decision to **FAIL**.
+The rewrite is separate. `scheduled` is not `verified`. The Complete checkbox must remain unchecked unless Status is `verified` and Verified UTC, operator/private reference, and safe evidence are all populated. Blank, `pending`, `blocked`, unchecked, contradictory, or incompletely evidenced rows force the Stage 1 decision to **FAIL**; only checked + `verified` + complete evidence permits **PASS**.
 
 ## Exit gate
 
