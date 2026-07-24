@@ -64,6 +64,12 @@ function assertPathWithin(path, root, label) {
 }
 
 function assertManifestContainment(fixture, manifest) {
+  assertPathWithin(manifest.sourceRoot, fixture.root, 'sourceRoot');
+  assert.equal(
+    resolve(manifest.sourceRoot),
+    resolve(fixture.sourceRoot),
+    'sourceRoot must be the fixture source root'
+  );
   assertPathWithin(manifest.manifestPath, fixture.root, 'manifestPath');
   assertPathWithin(manifest.quarantinePath, fixture.root, 'quarantinePath');
   assertPathWithin(manifest.manifestPath, fixture.quarantineRoot, 'manifestPath');
@@ -132,7 +138,16 @@ function runPowerShell(fixture, repositoryScript, args) {
   const script = fixtureLocalScript(fixture, repositoryScript);
   const result = spawnSync(
     'powershell.exe',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...args],
+    [
+      '-NoLogo',
+      '-NonInteractive',
+      '-NoProfile',
+      '-ExecutionPolicy',
+      'Bypass',
+      '-File',
+      script,
+      ...args,
+    ],
     {
       cwd: fixture.root,
       encoding: 'utf8',
@@ -176,6 +191,7 @@ function createManifestFixture(fixture, timestamp) {
     sensitive: true,
     sqliteOpened: false,
     backupTimeUtc: '2026-07-24T12:00:00.000Z',
+    sourceRoot: fixture.sourceRoot,
     quarantinePath,
     manifestPath,
     files,
@@ -200,6 +216,8 @@ afterEach(() => {
 
 test('quarantine copies the coherent set byte-for-byte and writes a safe manifest', () => {
   const fixture = newFixture();
+  const sourceSentinel = join(fixture.dataRoot, 'keep-me.txt');
+  writeFileSync(sourceSentinel, 'keep');
   const result = runPowerShell(fixture, repositoryQuarantineScript, [
     '-SourceRoot',
     fixture.sourceRoot,
@@ -237,6 +255,10 @@ test('quarantine copies the coherent set byte-for-byte and writes a safe manifes
     );
   }
   assert.equal(existsSync(output.manifestPath), true);
+  for (const [name, bytes] of fixture.files) {
+    assert.deepEqual(readFileSync(join(fixture.dataRoot, name)), bytes);
+  }
+  assert.equal(readFileSync(sourceSentinel, 'utf8'), 'keep');
 });
 
 test('quarantine fails closed if any required legacy file is absent', () => {
