@@ -2,46 +2,70 @@ name: CI
 
 on:
   push:
-    branches: [ main, master, develop ]
-    paths:
-      - 'backend/**'
+    branches: [main, master, develop]
   pull_request:
-    branches: [ main, master ]
-    paths:
-      - 'backend/**'
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
 
 jobs:
-  test:
-    runs-on: ubuntu-latest
-
-    defaults:
-      run:
-        working-directory: ./backend
-
-    strategy:
-      matrix:
-        node-version: [18, 20, 22]
+  stage-1:
+    name: Stage 1 hygiene and workspace
+    runs-on: windows-latest
+    timeout-minutes: 20
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Check out source
+        # Official GitHub-maintained action; v4 is approved by the Stage 1 plan.
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Setup Node.js ${{ matrix.node-version }}
+      - name: Set up Node.js
+        # Official GitHub-maintained action; v4 is approved by the Stage 1 plan.
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: 'npm'
-          cache-dependency-path: './backend/package-lock.json'
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: package-lock.json
 
-      - name: Install dependencies
+      - name: Verify exact toolchain
+        shell: pwsh
+        run: |
+          if ((node --version) -ne 'v24.18.0') { throw 'Unexpected Node version' }
+          if ((npm --version) -ne '11.6.2') { throw 'Unexpected npm version' }
+
+      - name: Install exact root dependencies
         run: npm ci
 
-      - name: Run linter
-        run: npm run lint
-        continue-on-error: true
+      - name: Audit production and development dependencies
+        run: npm audit --audit-level=high
 
-      - name: Run tests
-        run: npm test
-        env:
-          NODE_ENV: test
-          GEMINI_API_KEY: test-placeholder-key
-          ALLOWED_ORIGINS: http://localhost:5000
+      - name: Scan tracked source for secrets
+        run: npm run scan:secrets
+
+      - name: Check repository hygiene
+        run: npm run check:hygiene
+
+      - name: Run workspace contract tests
+        run: npm run test:workspace
+
+      - name: Run containment tests
+        run: npm run test:containment
+
+      - name: Run hygiene tests
+        run: npm run test:hygiene
+
+      - name: Lint with zero warnings
+        run: npm run lint
+
+      - name: Check formatting
+        run: npm run format:check
+
+      - name: Run backend tests against disposable storage
+        run: npm run test:backend:legacy-safe
+
+      - name: Run Stage 1 build validation
+        run: npm run build
