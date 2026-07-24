@@ -22,7 +22,7 @@ $pathComparison = if ([System.Environment]::OSVersion.Platform -eq
 
 function Get-CanonicalPath {
   param([Parameter(Mandatory=$true)][string]$Path)
-  return [System.IO.Path]::GetFullPath($Path)
+  return [EasyRewind.NativePathSafety]::CanonicalizeLocalDrivePath($Path)
 }
 
 function Test-PathEqual {
@@ -65,20 +65,37 @@ function Assert-ManifestInteger {
   }
 }
 
-function Open-LockedDirectoryChain {
+function Open-LockedLocalDirectoryPath {
   param(
-    [Parameter(Mandatory=$true)][string]$Root,
-    [string[]]$RelativeComponents = @()
+    [Parameter(Mandatory=$true)][string]$Path
   )
   $handles = [System.Collections.Generic.List[EasyRewind.NativeDirectoryHandle]]::new()
   try {
-    $current = Get-CanonicalPath -Path $Root
-    $handles.Add([EasyRewind.NativeDirectoryHandle]::OpenExisting($current))
-    foreach ($component in $RelativeComponents) {
-      $current = Get-CanonicalPath -Path (Join-Path $current $component)
-      $handles.Add([EasyRewind.NativeDirectoryHandle]::OpenExisting($current))
+    $canonicalPath = Get-CanonicalPath -Path $Path
+    $volumeRoot = [System.IO.Path]::GetPathRoot($canonicalPath)
+    $currentHandle = [EasyRewind.NativeDirectoryHandle]::OpenLocalVolumeRoot(
+      $canonicalPath
+    )
+    $handles.Add($currentHandle)
+    $relativePath = $canonicalPath.Substring($volumeRoot.Length)
+    $components = @(
+      $relativePath.Split(
+        [char[]]@('\', '/'),
+        [System.StringSplitOptions]::RemoveEmptyEntries
+      )
+    )
+    foreach ($component in $components) {
+      $currentHandle = [EasyRewind.NativeDirectoryHandle]::OpenExisting(
+        $currentHandle,
+        [string]$component
+      )
+      $handles.Add($currentHandle)
     }
-    return $handles
+    return [pscustomobject]@{
+      Handles = $handles
+      Leaf = $currentHandle
+      Path = $canonicalPath
+    }
   } catch {
     foreach ($handle in $handles) {
       $handle.Dispose()
@@ -119,12 +136,12 @@ function Assert-SnapshotMatchesManifest {
   }
 }
 
-if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
-  throw "Required verified file is missing: $ManifestPath"
+$resolvedManifestPath = Get-CanonicalPath -Path $ManifestPath
+$manifestParent = [System.IO.Directory]::GetParent($resolvedManifestPath)
+if ($null -eq $manifestParent -or
+    [System.IO.Path]::GetFileName($resolvedManifestPath) -cne 'manifest.json') {
+  throw 'Manifest must be direct manifest.json in the quarantine directory.'
 }
-$resolvedManifestPath = Get-CanonicalPath -Path (
-  (Get-Item -LiteralPath $ManifestPath -Force).FullName
-)
 $manifestHandle = $null
 $sourceDirectoryHandles = $null
 $quarantineDirectoryHandles = $null
@@ -134,8 +151,13 @@ $failure = $null
 $resultJson = $null
 
 try {
+  $quarantineDirectoryChain = Open-LockedLocalDirectoryPath `
+    -Path $manifestParent.FullName
+  $quarantineDirectoryHandles = $quarantineDirectoryChain.Handles
+  $quarantineDirectoryHandle = $quarantineDirectoryChain.Leaf
   $manifestHandle = [EasyRewind.NativeHandleFile]::OpenBackupRead(
-    $resolvedManifestPath
+    $quarantineDirectoryHandle,
+    'manifest.json'
   )
   $manifestBytes = $manifestHandle.ReadAllBytes()
   if ($manifestBytes.Length -ge 3 -and
@@ -213,15 +235,13 @@ try {
     throw 'Manifest sourceRoot is not canonical.'
   }
   $declaredQuarantinePath = [string]$manifest.quarantinePath
-  if (-not (Test-Path -LiteralPath $declaredQuarantinePath -PathType Container)) {
-    throw 'Manifest quarantinePath is not an existing directory.'
-  }
-  $resolvedQuarantinePath = Get-CanonicalPath -Path (
-    (Get-Item -LiteralPath $declaredQuarantinePath -Force).FullName
-  )
+  $resolvedQuarantinePath = Get-CanonicalPath -Path $declaredQuarantinePath
   if (-not (Test-PathEqual `
       -Left $declaredQuarantinePath `
-      -Right $resolvedQuarantinePath)) {
+      -Right $resolvedQuarantinePath) -or
+      -not (Test-PathEqual `
+        -Left $quarantineDirectoryHandle.Path `
+        -Right $resolvedQuarantinePath)) {
     throw 'Manifest quarantinePath is not canonical.'
   }
   $declaredManifestPath = [string]$manifest.manifestPath
@@ -234,9 +254,7 @@ try {
         -Right $canonicalDeclaredManifest)) {
     throw 'Supplied manifest does not match its declared manifestPath.'
   }
-  $manifestParent = [System.IO.Directory]::GetParent($resolvedManifestPath)
-  if ($null -eq $manifestParent -or
-      -not (Test-PathEqual `
+  if (-not (Test-PathEqual `
         -Left $manifestParent.FullName `
         -Right $resolvedQuarantinePath) -or
       [System.IO.Path]::GetFileName($resolvedManifestPath) -cne 'manifest.json') {
@@ -318,21 +336,18 @@ try {
   # Supplemental metadata is rerun immediately before the authoritative locks.
   Invoke-EasyRewindSupplementalProcessVerification `
     -ResolvedSourceRoot $canonicalSourceRoot
-  $sourceDirectoryHandles = Open-LockedDirectoryChain `
-    -Root $canonicalSourceRoot `
-    -RelativeComponents @('backend', 'data')
-  $quarantineRoot = [System.IO.Directory]::GetParent(
-    $resolvedQuarantinePath
-  ).FullName
-  $quarantineLeaf = [System.IO.Path]::GetFileName($resolvedQuarantinePath)
-  $quarantineDirectoryHandles = Open-LockedDirectoryChain `
-    -Root $quarantineRoot `
-    -RelativeComponents @($quarantineLeaf)
+  $sourceDataPath = Get-CanonicalPath -Path (
+    Join-Path (Join-Path $canonicalSourceRoot 'backend') 'data'
+  )
+  $sourceDirectoryChain = Open-LockedLocalDirectoryPath -Path $sourceDataPath
+  $sourceDirectoryHandles = $sourceDirectoryChain.Handles
+  $sourceDataHandle = $sourceDirectoryChain.Leaf
 
   foreach ($validatedFile in $validatedFiles) {
     try {
       $sourceHandle = [EasyRewind.NativeHandleFile]::OpenPurgeSource(
-        $validatedFile.SourcePath
+        $sourceDataHandle,
+        $validatedFile.Name
       )
     } catch {
       throw "Source changed or source set is in use: $($validatedFile.SourcePath)"
@@ -340,7 +355,8 @@ try {
     $sourceHandles.Add($sourceHandle)
     try {
       $backupHandle = [EasyRewind.NativeHandleFile]::OpenBackupRead(
-        $validatedFile.BackupPath
+        $quarantineDirectoryHandle,
+        $validatedFile.Name
       )
     } catch {
       throw "Backup checksum mismatch or backup is in use: $($validatedFile.BackupPath)"
@@ -406,11 +422,6 @@ try {
     )
     Close-HandleCollection -Handles $sourceHandles
     $sourceHandles.Clear()
-    foreach ($validatedFile in $validatedFiles) {
-      if (Test-Path -LiteralPath $validatedFile.SourcePath) {
-        throw "Delete-by-handle did not remove source: $($validatedFile.SourcePath)"
-      }
-    }
     $resultJson = ([ordered]@{
       purged = $true
       manifestPath = $resolvedManifestPath

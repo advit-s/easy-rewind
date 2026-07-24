@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {
   copyFileSync,
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
@@ -182,6 +183,118 @@ try {
     );
     assert.deepEqual(JSON.parse(result.stdout), { existsAfterFailure: false });
     assert.equal(existsSync(createdPath), false);
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
+test('relative child handles prevent parent substitution and preserve identity', () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-relative-open-'));
+  try {
+    const helperPath = join(fixtureRoot, basename(repositoryHelper));
+    copyFileSync(repositoryHelper, helperPath);
+    const childPath = join(fixtureRoot, 'child');
+    const renamedPath = join(fixtureRoot, 'renamed-child');
+    const payloadPath = join(childPath, 'payload.bin');
+    mkdirSync(childPath);
+    writeFileSync(payloadPath, Buffer.from([0x10, 0x20, 0x30]));
+    const driverPath = join(fixtureRoot, 'relative-open-driver.ps1');
+    writeFileSync(
+      driverPath,
+      `
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+. '${helperPath.replaceAll("'", "''")}'
+$canonicalRoot = [EasyRewind.NativePathSafety]::CanonicalizeLocalDrivePath('${fixtureRoot.replaceAll("'", "''")}')
+$volumeRoot = [IO.Path]::GetPathRoot($canonicalRoot)
+$directoryHandles = [Collections.Generic.List[EasyRewind.NativeDirectoryHandle]]::new()
+$parent = [EasyRewind.NativeDirectoryHandle]::OpenLocalVolumeRoot($canonicalRoot)
+$directoryHandles.Add($parent)
+foreach ($component in $canonicalRoot.Substring($volumeRoot.Length).Split(
+    [char[]]@('\\', '/'),
+    [StringSplitOptions]::RemoveEmptyEntries
+  )) {
+  $parent = [EasyRewind.NativeDirectoryHandle]::OpenExisting(
+    $parent,
+    [string]$component
+  )
+  $directoryHandles.Add($parent)
+}
+$child = $null
+$file = $null
+try {
+  $child = [EasyRewind.NativeDirectoryHandle]::OpenExisting($parent, 'child')
+  $file = [EasyRewind.NativeHandleFile]::OpenBackupRead($child, 'payload.bin')
+  $before = $file.Snapshot()
+  $substitutionBlocked = $false
+  try {
+    [System.IO.Directory]::Move(
+      '${childPath.replaceAll("'", "''")}',
+      '${renamedPath.replaceAll("'", "''")}'
+    )
+  } catch {
+    $substitutionBlocked = $true
+  }
+  $unsafePathRejections = @(
+    '\\\\server\\share\\source',
+    '\\\\?\\C:\\device-path',
+    '${payloadPath.replaceAll("'", "''")}:alternate'
+  ) | ForEach-Object {
+    try {
+      $null = [EasyRewind.NativePathSafety]::CanonicalizeLocalDrivePath($_)
+      $false
+    } catch {
+      $true
+    }
+  }
+  $after = $file.Snapshot()
+  [pscustomobject]@{
+    substitutionBlocked = $substitutionBlocked
+    sameIdentity = $before.HasSameIdentity($after)
+    unsafePathRejections = $unsafePathRejections
+    childPath = $child.Path
+    filePath = $file.Path
+  } | ConvertTo-Json -Compress
+} finally {
+  if ($null -ne $file) { $file.Dispose() }
+  if ($null -ne $child) { $child.Dispose() }
+  foreach ($directoryHandle in $directoryHandles) {
+    $directoryHandle.Dispose()
+  }
+}
+`
+    );
+
+    const result = spawnSync(
+      'powershell.exe',
+      [
+        '-NoLogo',
+        '-NonInteractive',
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        driverPath,
+      ],
+      {
+        cwd: fixtureRoot,
+        encoding: 'utf8',
+        timeout: 10_000,
+      }
+    );
+    assert.equal(
+      result.status,
+      0,
+      `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+    );
+    const output = JSON.parse(result.stdout);
+    assert.equal(output.substitutionBlocked, true);
+    assert.equal(output.sameIdentity, true);
+    assert.deepEqual(output.unsafePathRejections, [true, true, true]);
+    assert.equal(resolve(output.childPath), resolve(childPath));
+    assert.equal(resolve(output.filePath), resolve(payloadPath));
+    assert.equal(existsSync(childPath), true);
+    assert.equal(existsSync(renamedPath), false);
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }

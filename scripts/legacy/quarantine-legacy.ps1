@@ -25,17 +25,7 @@ $isWindowsPlatform = [System.Environment]::OSVersion.Platform -eq [System.Platfo
 function Get-CanonicalPath {
   param([Parameter(Mandatory=$true)][string]$Path)
 
-  return [System.IO.Path]::GetFullPath($Path)
-}
-
-function Get-CanonicalExistingDirectory {
-  param([Parameter(Mandatory=$true)][string]$Path)
-
-  $item = Get-Item -LiteralPath $Path -Force
-  if (-not ($item -is [System.IO.DirectoryInfo])) {
-    throw "Directory does not exist: $Path"
-  }
-  return Get-CanonicalPath -Path $item.FullName
+  return [EasyRewind.NativePathSafety]::CanonicalizeLocalDrivePath($Path)
 }
 
 function Test-PathEqual {
@@ -503,21 +493,46 @@ function Assert-ExactPrivateAcl {
   }
 }
 
-function Open-LockedDirectoryChain {
+function Open-LockedLocalDirectoryPath {
   param(
-    [Parameter(Mandatory=$true)][string]$Root,
-    [string[]]$RelativeComponents = @()
+    [Parameter(Mandatory=$true)][string]$Path,
+    [switch]$CreateMissing
   )
 
   $handles = [System.Collections.Generic.List[EasyRewind.NativeDirectoryHandle]]::new()
   try {
-    $current = Get-CanonicalPath -Path $Root
-    $handles.Add([EasyRewind.NativeDirectoryHandle]::OpenExisting($current))
-    foreach ($component in $RelativeComponents) {
-      $current = Get-CanonicalPath -Path (Join-Path $current $component)
-      $handles.Add([EasyRewind.NativeDirectoryHandle]::OpenExisting($current))
+    $canonicalPath = Get-CanonicalPath -Path $Path
+    $volumeRoot = [System.IO.Path]::GetPathRoot($canonicalPath)
+    $currentHandle = [EasyRewind.NativeDirectoryHandle]::OpenLocalVolumeRoot(
+      $canonicalPath
+    )
+    $handles.Add($currentHandle)
+    $relativePath = $canonicalPath.Substring($volumeRoot.Length)
+    $components = @(
+      $relativePath.Split(
+        [char[]]@('\', '/'),
+        [System.StringSplitOptions]::RemoveEmptyEntries
+      )
+    )
+    foreach ($component in $components) {
+      if ($CreateMissing) {
+        $currentHandle = [EasyRewind.NativeDirectoryHandle]::OpenOrCreate(
+          $currentHandle,
+          [string]$component
+        )
+      } else {
+        $currentHandle = [EasyRewind.NativeDirectoryHandle]::OpenExisting(
+          $currentHandle,
+          [string]$component
+        )
+      }
+      $handles.Add($currentHandle)
     }
-    return $handles
+    return [pscustomobject]@{
+      Handles = $handles
+      Leaf = $currentHandle
+      Path = $canonicalPath
+    }
   } catch {
     foreach ($handle in $handles) {
       $handle.Dispose()
@@ -557,7 +572,7 @@ function Assert-StableSnapshot {
   }
 }
 
-$resolvedSourceRoot = Get-CanonicalExistingDirectory -Path $SourceRoot
+$resolvedSourceRoot = Get-CanonicalPath -Path $SourceRoot
 Assert-NoEasyRewindProcess -ResolvedSourceRoot $resolvedSourceRoot
 
 if ([string]::IsNullOrWhiteSpace($QuarantineRoot)) {
@@ -600,23 +615,11 @@ if (-not (Test-PathEqual -Left ([System.IO.Directory]::GetParent($destination).F
     [System.IO.Path]::GetFileName($destination) -cne $Timestamp) {
   throw 'Quarantine destination is not the expected direct timestamp child.'
 }
-if (Test-Path -LiteralPath $destination) {
-  throw "Quarantine destination already exists: $destination"
-}
-
 $sourceFiles = @()
 foreach ($name in $requiredNames) {
   $sourcePath = Get-CanonicalPath -Path (
     Join-Path (Join-Path (Join-Path $resolvedSourceRoot 'backend') 'data') $name
   )
-  if (-not (Test-Path -LiteralPath $sourcePath -PathType Leaf)) {
-    throw "Required legacy file is missing: $sourcePath"
-  }
-  $sourceItem = Get-Item -LiteralPath $sourcePath -Force
-  if (-not ($sourceItem -is [System.IO.FileInfo]) -or
-      (($sourceItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
-    throw "Required legacy file is missing: $sourcePath"
-  }
   $sourceFiles += [pscustomobject]@{
     Name = $name
     Path = $sourcePath
@@ -640,13 +643,17 @@ $cleanupFailure = $null
 try {
   # Process metadata is supplemental. These raw handles are the authoritative
   # gate for relative launches, startup-before-listen, and custom ports.
-  $sourceDirectoryHandles = Open-LockedDirectoryChain `
-    -Root $resolvedSourceRoot `
-    -RelativeComponents @('backend', 'data')
+  $sourceDataPath = Get-CanonicalPath -Path (
+    Join-Path (Join-Path $resolvedSourceRoot 'backend') 'data'
+  )
+  $sourceDirectoryChain = Open-LockedLocalDirectoryPath -Path $sourceDataPath
+  $sourceDirectoryHandles = $sourceDirectoryChain.Handles
+  $sourceDataHandle = $sourceDirectoryChain.Leaf
   foreach ($sourceFile in $sourceFiles) {
     try {
       $sourceHandle = [EasyRewind.NativeHandleFile]::OpenQuarantineSource(
-        $sourceFile.Path
+        $sourceDataHandle,
+        $sourceFile.Name
       )
     } catch {
       if ($_.Exception.Message -match 'source set is in use') {
@@ -658,19 +665,11 @@ try {
     $sourceInitial[$sourceFile.Name] = $sourceHandle.Snapshot()
   }
 
-  if (Test-Path -LiteralPath $resolvedQuarantineRoot) {
-    if (-not (Test-Path -LiteralPath $resolvedQuarantineRoot -PathType Container)) {
-      throw "QuarantineRoot is not a directory: $resolvedQuarantineRoot"
-    }
-  } else {
-    $null = [System.IO.Directory]::CreateDirectory($resolvedQuarantineRoot)
-  }
-  $quarantineRootHandles = @(
-    Open-LockedDirectoryChain -Root $resolvedQuarantineRoot
-  )
-  $quarantineRootHandle = $quarantineRootHandles[
-    $quarantineRootHandles.Count - 1
-  ]
+  $quarantineRootChain = Open-LockedLocalDirectoryPath `
+    -Path $resolvedQuarantineRoot `
+    -CreateMissing
+  $quarantineRootHandles = $quarantineRootChain.Handles
+  $quarantineRootHandle = $quarantineRootChain.Leaf
   $destinationHandle = [EasyRewind.NativeDirectoryHandle]::CreateNew(
     $quarantineRootHandle,
     $Timestamp
@@ -688,7 +687,8 @@ try {
     )
     $backupHandle = [EasyRewind.NativeHandleOperations]::CopyToCreateNew(
       $sourceHandle,
-      $backupPath
+      $destinationHandle,
+      $sourceFile.Name
     )
     $backupHandles.Add($backupHandle)
     $createdBackupPaths += $backupPath
@@ -727,7 +727,10 @@ try {
   }
   $manifestJson = $manifest | ConvertTo-Json -Depth 6 -Compress
   $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
-  $manifestHandle = [EasyRewind.NativeHandleFile]::CreateNew($manifestPath)
+  $manifestHandle = [EasyRewind.NativeHandleFile]::CreateNew(
+    $destinationHandle,
+    'manifest.json'
+  )
   $manifestHandle.WriteAllBytes(
     $utf8WithoutBom.GetBytes($manifestJson + [System.Environment]::NewLine)
   )
