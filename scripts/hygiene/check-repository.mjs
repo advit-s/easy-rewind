@@ -1,6 +1,6 @@
-import { existsSync, lstatSync, readdirSync } from 'node:fs';
+import { lstatSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-import { basename, join, relative, resolve, sep } from 'node:path';
+import { basename, join, parse, relative, resolve, sep } from 'node:path';
 import process from 'node:process';
 
 const forbiddenExact = new Set(['.env', 'backend/.env', 'tmp_test.js']);
@@ -38,6 +38,17 @@ const forbiddenSuffixes = [
   '.sqlite-shm',
   '.log',
   '.node',
+  '.exe',
+  '.msi',
+  '.appx',
+  '.zip',
+  '.7z',
+  '.tar',
+  '.tar.gz',
+  '.blockmap',
+  '.obj',
+  '.pdb',
+  '.tmp',
 ];
 
 function normalize(path) {
@@ -67,19 +78,24 @@ function isForbidden(relativePath) {
   return forbiddenSuffixes.some((suffix) => normalized.endsWith(suffix));
 }
 
-function walk(root, directory = root) {
+function walk(root, start = root) {
   const results = [];
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if (directory === root && entry.name === '.git') continue;
+  const pending = [start];
 
-    const absolute = join(directory, entry.name);
-    const relativePath = relative(root, absolute);
-    results.push(relativePath);
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (directory === root && entry.name === '.git') continue;
 
-    if (entry.isDirectory() && !entry.isSymbolicLink()) {
-      const metadata = lstatSync(absolute);
-      if (!metadata.isSymbolicLink()) {
-        results.push(...walk(root, absolute));
+      const absolute = join(directory, entry.name);
+      const relativePath = relative(root, absolute);
+      results.push(relativePath);
+
+      if (entry.isDirectory() && !entry.isSymbolicLink()) {
+        const metadata = lstatSync(absolute);
+        if (!metadata.isSymbolicLink()) {
+          pending.push(absolute);
+        }
       }
     }
   }
@@ -110,50 +126,84 @@ function inspectGit(root) {
   return git.stdout.split('\0').filter(Boolean);
 }
 
-function findNestedGitMetadata(root, directory = root) {
+function findNestedGitMetadata(root) {
   const results = [];
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    const absolute = join(directory, entry.name);
-    const relativePath = relative(root, absolute);
-    const normalizedName = entry.name.toLowerCase();
-    if (normalizedName === '.git') {
-      if (directory !== root) {
-        results.push(relativePath);
-        if (entry.isDirectory() && !entry.isSymbolicLink()) {
-          results.push(...walk(root, absolute));
+  const pending = [root];
+
+  while (pending.length > 0) {
+    const directory = pending.pop();
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      const absolute = join(directory, entry.name);
+      const relativePath = relative(root, absolute);
+      const normalizedName = entry.name.toLowerCase();
+      if (normalizedName === '.git') {
+        if (directory !== root) {
+          results.push(relativePath);
+          if (entry.isDirectory() && !entry.isSymbolicLink()) {
+            for (const nested of walk(root, absolute)) {
+              results.push(nested);
+            }
+          }
         }
+        continue;
       }
-      continue;
-    }
-    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
-    if (!forbiddenSegments.has(normalizedName)) {
-      results.push(...findNestedGitMetadata(root, absolute));
+      if (
+        entry.isDirectory() &&
+        !entry.isSymbolicLink() &&
+        !isForbidden(relativePath)
+      ) {
+        pending.push(absolute);
+      }
     }
   }
   return results;
 }
 
-function inspect(root, filesystemMode) {
-  if (!existsSync(root)) {
-    throw new Error('Repository root does not exist.');
+function validateRoot(root) {
+  const anchor = parse(root).root;
+  const components = root
+    .slice(anchor.length)
+    .split(sep)
+    .filter(Boolean);
+  let current = anchor;
+
+  for (const component of components) {
+    current = join(current, component);
+    const metadata = lstatSync(current, { throwIfNoEntry: false });
+    if (!metadata) break;
+    if (metadata.isSymbolicLink()) {
+      throw new Error(
+        'Repository root path must not contain symbolic or reparse links.',
+      );
+    }
   }
-  const rootMetadata = lstatSync(root);
-  if (rootMetadata.isSymbolicLink()) {
-    throw new Error('Repository root must not be a symbolic or reparse link.');
+
+  const rootMetadata = lstatSync(root, { throwIfNoEntry: false });
+  if (!rootMetadata) {
+    throw new Error('Repository root does not exist.');
   }
   if (!rootMetadata.isDirectory()) {
     throw new Error('Repository root is not a directory.');
   }
-  return filesystemMode || !existsSync(join(root, '.git'))
-    ? walk(root)
-    : [...inspectGit(root), ...findNestedGitMetadata(root)];
 }
 
-function isExistingMaterial(root, relativePath) {
-  const absolute = join(root, relativePath);
-  if (!existsSync(absolute)) return false;
-  const metadata = lstatSync(absolute);
-  return metadata.isFile() || metadata.isDirectory();
+function hasSafeGitMetadata(root) {
+  const metadata = lstatSync(join(root, '.git'), { throwIfNoEntry: false });
+  if (!metadata) return false;
+  if (metadata.isSymbolicLink()) {
+    throw new Error(
+      'Git repository metadata must not be a symbolic or reparse link.',
+    );
+  }
+  return true;
+}
+
+function inspect(root, filesystemMode) {
+  validateRoot(root);
+  const hasGitMetadata = hasSafeGitMetadata(root);
+  return filesystemMode || !hasGitMetadata
+    ? walk(root)
+    : [...inspectGit(root), ...findNestedGitMetadata(root)];
 }
 
 function main() {
@@ -162,7 +212,6 @@ function main() {
     const filesystemMode = process.argv.includes('--filesystem');
     const violations = inspect(root, filesystemMode)
       .filter(isForbidden)
-      .filter((path) => isExistingMaterial(root, path))
       .map(normalize)
       .sort((left, right) => left.localeCompare(right));
 

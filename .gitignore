@@ -51,7 +51,7 @@ temp/
 dist/
 build/
 out/
-release/
+/release/
 artifacts/
 *.zip
 *.7z

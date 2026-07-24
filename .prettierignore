@@ -2,7 +2,7 @@ node_modules
 dist
 build
 out
-release
+/release
 artifacts
 coverage
 logs
