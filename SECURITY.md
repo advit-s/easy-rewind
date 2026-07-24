@@ -12,6 +12,9 @@ the repository owner and request a private incident channel. Do not open a
 public issue. Include file paths and commit identifiers, not the secret value or
 personal record contents.
 
+GitHub private vulnerability reporting or a published dedicated private
+security contact is a release prerequisite. Do not invent or infer an address.
+
 An exposed credential must be revoked at its provider. Deleting it from the
 working tree or rewriting Git history does not revoke it.
 

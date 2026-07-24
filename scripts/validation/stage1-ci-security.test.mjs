@@ -138,6 +138,7 @@ test('security policy treats local artifacts as sensitive and revocation as sepa
     /Report a vulnerability/i,
     /private\s+vulnerability reporting/i,
     /existing private contact channel/i,
+    /release prerequisite/i,
     /do not open a\s+public issue/i,
     /must be revoked/i,
     /rewriting Git history does not revoke/i,
@@ -177,13 +178,9 @@ test('history remediation is a separate post-gate coordinated external action', 
 
   assert.match(guide, /only after (?:the )?containment and workspace gates pass.+collaborator.+freeze/is);
   assert.match(guide, /separate\s+Stage 1 external action.+required before.+final PASS/is);
-  assert.match(guide, /fresh mirror clone/i);
   assert.match(guide, /repository-external/i);
   assert.match(guide, /non-synced/i);
-  assert.match(
-    guide,
-    /\$RemoteUri\.Host\s+-eq\s+'github\.com'.+\$RemoteUri\.AbsolutePath\s+-eq\s+'\/OWNER\/REPOSITORY\.git'.+throw/is
-  );
+  assert.match(guide, /\$ExpectedSlug\s+-eq\s+'OWNER\/REPOSITORY'.+throw/is);
   assert.match(guide, /\$BackupMirror/);
   assert.match(guide, /\$RewriteMirror/);
   assert.match(guide, /SetAccessRuleProtection/);
@@ -211,11 +208,83 @@ test('history remediation is a separate post-gate coordinated external action', 
   }
 });
 
+test('history rewrite starts from one protected snapshot and aborts on remote drift', () => {
+  const guide = read('docs/security/git-history-remediation.md');
+
+  assert.match(guide, /\$ExpectedRepositorySlug\s*=/);
+  assert.match(guide, /remote\s+get-url\s+origin/);
+  assert.match(guide, /\$RemoteUri\.Query/);
+  assert.match(guide, /\$RemoteUri\.Fragment/);
+  assert.match(guide, /expected repository slug/i);
+  assert.match(guide, /git\s+clone\s+--mirror\s+\$BackupMirror\s+\$RewriteMirror/);
+  assert.doesNotMatch(guide, /git\s+clone\s+--mirror\s+\$RemoteUrl\s+\$RewriteMirror/);
+  assert.match(guide, /FREEZE CONFIRMED/);
+
+  const guardClone = guide.indexOf('git clone --mirror $RemoteUrl $RemoteGuardMirror');
+  const guardCompare = guide.indexOf('Compare-Object $RecordedBackupRefs $GuardRemoteRefs');
+  const forcePush = guide.indexOf('git -C $RewriteMirror push --force --mirror $RemoteUrl');
+  assert.ok(guardClone >= 0, 'missing fresh remote guard clone');
+  assert.ok(guardCompare > guardClone, 'remote refs must be compared after the guard clone');
+  assert.ok(forcePush > guardCompare, 'force push must occur only after the remote-drift comparison');
+});
+
+test('replacement cleanup and incident closeout fail closed', () => {
+  const guide = read('docs/security/git-history-remediation.md');
+
+  assert.doesNotMatch(guide, /Remove-Item[^\r\n]+SilentlyContinue/);
+  assert.match(guide, /Remove-Item\s+-LiteralPath\s+\$ReplacementFile\s+-Force\s+-ErrorAction\s+Stop/);
+  assert.match(
+    guide,
+    /Remove-Item\s+-LiteralPath\s+\$ReplacementFile[\s\S]+Test-Path\s+-LiteralPath\s+\$ReplacementFile/
+  );
+  assert.match(guide, /catch\s*\{[\s\S]*throw 'Replacement-file cleanup failed/);
+  assert.match(guide, /ordinary deletion is not secure erasure/i);
+
+  const closeout = guide.split('## Protected incident closeout')[1] ?? '';
+  assert.match(closeout, /\$IncidentRoot\s*=\s*Read-Host/);
+  assert.match(closeout, /security-incidents/);
+  assert.match(closeout, /history-\\d\{8\}T\\d\{9\}Z/);
+  assert.match(closeout, /SetAccessRuleProtection|AreAccessRulesProtected/);
+  assert.match(closeout, /\$RootAcl\.GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)/);
+  assert.match(closeout, /\$ExpectedParentItem[\s\S]+ReparsePoint/);
+  assert.match(closeout, /Remove-Item\s+-LiteralPath\s+\$IncidentFull\s+-Recurse\s+-Force\s+-ErrorAction\s+Stop/);
+  assert.match(closeout, /Test-Path\s+-LiteralPath\s+\$IncidentFull/);
+  assert.match(closeout, /media sanitization|cryptographic erasure|destroy the media/i);
+});
+
+test('rollback is independently resumable from a protected incident manifest', () => {
+  const guide = read('docs/security/git-history-remediation.md');
+  const rollback = guide.split('## Exact rollback from the protected mirror')[1] ?? '';
+
+  assert.match(guide, /incident-manifest\.json/);
+  assert.match(guide, /expectedRepositorySlug/);
+  assert.match(guide, /remoteUrl/);
+  for (const artifact of ['backupMirror', 'backupRefs', 'backupBundle', 'backupEvidence']) {
+    assert.match(guide, new RegExp(`${artifact}\\s*=`));
+  }
+
+  assert.match(rollback, /\$IncidentRoot\s*=\s*Read-Host/);
+  assert.match(rollback, /incident-manifest\.json/);
+  assert.match(rollback, /Resolve-IncidentChild/);
+  assert.match(rollback, /security-incidents/);
+  assert.match(rollback, /history-\\d\{8\}T\\d\{9\}Z/);
+  assert.match(rollback, /AreAccessRulesProtected/);
+  assert.match(rollback, /\$RootAcl\.GetOwner\(\[Security\.Principal\.SecurityIdentifier\]\)/);
+  assert.match(rollback, /WindowsIdentity/);
+  assert.match(rollback, /\$RemoteUri\.Query/);
+  assert.match(rollback, /\$RemoteUri\.Fragment/);
+  assert.match(rollback, /\$ExpectedRepositorySlug\s*=\s*Read-Host/);
+  assert.match(rollback, /Resolve-IncidentChild[\s\S]+RelativePath 'incident-manifest\.json'/);
+  assert.match(rollback, /Get-FileHash/);
+  assert.match(rollback, /Compare-Object\s+\$RecordedBackupRefs\s+\$CurrentBackupRefs/);
+  assert.match(rollback, /git\s+-C\s+\$BackupMirror\s+push\s+--force\s+--mirror\s+\$RemoteUrl/);
+});
+
 test('every PowerShell history-remediation block parses without errors', () => {
   const guide = read('docs/security/git-history-remediation.md');
   const blocks = [...guide.matchAll(/```powershell\s*\r?\n([\s\S]*?)```/gi)].map(match => match[1]);
 
-  assert.ok(blocks.length >= 4, 'expected preparation, rewrite, push, and rollback blocks');
+  assert.ok(blocks.length >= 6, 'expected preparation, rewrite, replacement, push, rollback, and closeout blocks');
   for (const [index, block] of blocks.entries()) {
     const result = parsePowerShell(block);
     assert.equal(result.error, undefined, `PowerShell parser failed to start for block ${index + 1}`);
