@@ -1,6 +1,8 @@
 node_modules
 dist
 build
+!scripts/build
+!scripts/build/**
 out
 /release
 artifacts

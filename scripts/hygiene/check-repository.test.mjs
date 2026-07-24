@@ -96,6 +96,7 @@ test('accepts placeholder examples, runtime placeholders, and source files', () 
     'backend/data/.gitkeep': '',
     'backend/server.js': 'export const ok = true;\n',
     'docs/release/stage.md': '# Release evidence\n',
+    'scripts/build/rebuild-electron-native.mjs': 'export {};\n',
   });
 
   const result = check(root, '--filesystem');

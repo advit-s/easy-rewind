@@ -50,6 +50,8 @@ temp/
 # Build and release outputs
 dist/
 build/
+!scripts/build/
+!scripts/build/**
 out/
 /release/
 artifacts/

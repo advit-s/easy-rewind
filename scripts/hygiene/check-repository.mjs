@@ -67,7 +67,8 @@ function isForbidden(relativePath) {
     segments.some(
       (segment, index) =>
         forbiddenSegments.has(segment) &&
-        !(segment === 'release' && index === 1 && segments[0] === 'docs'),
+        !(segment === 'release' && index === 1 && segments[0] === 'docs') &&
+        !(segment === 'build' && index === 1 && segments[0] === 'scripts'),
     )
   ) {
     return true;

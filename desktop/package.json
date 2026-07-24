@@ -11,7 +11,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "rebuild:native": "electron-rebuild -f -w better-sqlite3",
+    "rebuild:native": "node ../scripts/build/rebuild-electron-native.mjs",
     "build": "npm run rebuild:native && electron-builder --win --config build.config.json"
   },
   "dependencies": {},

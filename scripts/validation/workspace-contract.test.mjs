@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { inspectBackendElectronImports } from './backend-independence.mjs';
 
 const root = resolve(import.meta.dirname, '..', '..');
 
@@ -15,16 +16,6 @@ function dependencyValues(manifest) {
     ...(manifest.devDependencies ?? {}),
     ...(manifest.optionalDependencies ?? {}),
     ...(manifest.peerDependencies ?? {}),
-  });
-}
-
-function javascriptFiles(directory) {
-  return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
-    const absolute = join(directory, entry.name);
-    if (entry.isDirectory()) {
-      return ['data', 'node_modules', 'tests'].includes(entry.name) ? [] : javascriptFiles(absolute);
-    }
-    return entry.isFile() && entry.name.endsWith('.js') ? [absolute] : [];
   });
 }
 
@@ -97,6 +88,7 @@ test('workspace exposes the complete Stage 1 command contract and selected packa
   assert.equal(desktop.devDependencies.electron, '43.2.0');
   assert.equal(desktop.devDependencies['@electron/rebuild'], '4.2.0');
   assert.equal(desktop.devDependencies['electron-builder'], '26.15.3');
+  assert.equal(desktop.scripts['rebuild:native'], 'node ../scripts/build/rebuild-electron-native.mjs');
   assert.match(backend.description, /Electron-independent/i);
 });
 
@@ -118,17 +110,7 @@ test('environment example contains placeholders only and backend source is Elect
   assert.match(example, /^GEMINI_API_KEY=$/m);
   assert.doesNotMatch(example, /your[_-]gemini|AIza/i);
 
-  const backendRoot = join(root, 'backend');
-  const backendFiles = javascriptFiles(backendRoot);
-  for (const sourceFile of backendFiles) {
-    const sourceText = readFileSync(sourceFile, 'utf8');
-    assert.doesNotMatch(
-      sourceText,
-      /(?:require\s*\(\s*['"]electron['"]|from\s+['"]electron['"])/,
-      `${sourceFile.slice(backendRoot.length + 1)} must remain Electron-independent`
-    );
-  }
-  assert.ok(backendFiles.length > 0);
+  assert.deepEqual(inspectBackendElectronImports(join(root, 'backend')), []);
 });
 
 test('Secretlint ignores generated and sensitive outputs without excluding release evidence or source', () => {
