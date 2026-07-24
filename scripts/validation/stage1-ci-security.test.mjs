@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
-import { join, resolve } from 'node:path';
+import {
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { basename, join, resolve, sep } from 'node:path';
 import test from 'node:test';
 import { load as parseYaml } from 'js-yaml';
 
@@ -12,9 +23,8 @@ function read(relativePath) {
 }
 
 function parsePowerShell(source) {
-  const sourceBase64 = Buffer.from(source, 'utf8').toString('base64');
   const command = [
-    `$source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${sourceBase64}'))`,
+    '$source = [Console]::In.ReadToEnd()',
     '$tokens = $null',
     '$errors = $null',
     '[void][System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)',
@@ -26,10 +36,21 @@ function parsePowerShell(source) {
     {
       cwd: root,
       encoding: 'utf8',
+      input: source,
       windowsHide: true,
       timeout: 10_000,
     }
   );
+}
+
+function extractMarkedPowerShell(source, marker) {
+  const start = `# BEGIN ${marker}`;
+  const end = `# END ${marker}`;
+  const startIndex = source.indexOf(start);
+  const endIndex = source.indexOf(end, startIndex + start.length);
+  assert.ok(startIndex >= 0, `missing ${marker} start marker`);
+  assert.ok(endIndex > startIndex, `missing ${marker} end marker`);
+  return source.slice(startIndex + start.length, endIndex);
 }
 
 test('CI is a least-privilege repository-wide Windows Stage 1 gate', () => {
@@ -192,10 +213,10 @@ test('history remediation is a separate post-gate coordinated external action', 
   assert.match(guide, /replace-text/);
   assert.match(guide, /git.+log.+--all.+--name-only/is);
   assert.match(guide, /gitleaks.+--redact.+--log-opts.+--all/is);
-  assert.match(guide, /git.+-C.+\$RewriteMirror.+push.+--force.+--mirror.+\$RemoteUrl/is);
+  assert.match(guide, /git.+-C.+\$RewriteMirror.+push.+--atomic.+--force.+--mirror.+\$RemoteUrl/is);
   assert.match(guide, /\$VerificationMirror/);
   assert.match(guide, /git.+clone.+--mirror.+\$RemoteUrl.+\$VerificationMirror/is);
-  assert.match(guide, /git.+-C.+\$BackupMirror.+push.+--force.+--mirror.+\$RemoteUrl/is);
+  assert.match(guide, /git.+-C.+\$BackupMirror.+push.+--atomic.+--force.+--mirror.+\$RemoteUrl/is);
   assert.match(guide, /rollback/i);
   assert.doesNotMatch(guide, /<REMOTE-URL>/);
   assert.doesNotMatch(guide, /Write-(?:Host|Output).*(?:secret|credential)/i);
@@ -216,16 +237,56 @@ test('history rewrite starts from one protected snapshot and aborts on remote dr
   assert.match(guide, /\$RemoteUri\.Query/);
   assert.match(guide, /\$RemoteUri\.Fragment/);
   assert.match(guide, /expected repository slug/i);
-  assert.match(guide, /git\s+clone\s+--mirror\s+\$BackupMirror\s+\$RewriteMirror/);
-  assert.doesNotMatch(guide, /git\s+clone\s+--mirror\s+\$RemoteUrl\s+\$RewriteMirror/);
+  assert.match(guide, /git\s+clone\s+--mirror\s+--no-local\s+\$BackupMirror\s+\$RewriteMirror/);
+  assert.doesNotMatch(guide, /git\s+clone\s+--mirror(?:\s+--no-local)?\s+\$RemoteUrl\s+\$RewriteMirror/);
   assert.match(guide, /FREEZE CONFIRMED/);
 
   const guardClone = guide.indexOf('git clone --mirror $RemoteUrl $RemoteGuardMirror');
   const guardCompare = guide.indexOf('Compare-Object $RecordedBackupRefs $GuardRemoteRefs');
-  const forcePush = guide.indexOf('git -C $RewriteMirror push --force --mirror $RemoteUrl');
+  const forcePush = guide.indexOf('git -C $RewriteMirror push --atomic --force --mirror $RemoteUrl');
   assert.ok(guardClone >= 0, 'missing fresh remote guard clone');
   assert.ok(guardCompare > guardClone, 'remote refs must be compared after the guard clone');
   assert.ok(forcePush > guardCompare, 'force push must occur only after the remote-drift comparison');
+});
+
+test('history updates are atomic and provider limitations block release', () => {
+  const guide = read('docs/security/git-history-remediation.md');
+
+  const atomicPushes = guide.match(/push\s+--atomic\s+--force\s+--mirror\s+\$RemoteUrl/g) ?? [];
+  assert.equal(atomicPushes.length, 2, 'forward and rollback must each use one atomic mirror push');
+  assert.doesNotMatch(guide, /push\s+--force\s+--mirror\s+\$RemoteUrl/);
+  assert.match(guide, /must not be retried non-atomically|never retry non-atomically/i);
+  assert.match(guide, /provider does not\s+support atomic pushes/i);
+  assert.match(guide, /protected or read-only provider refs[\s\S]+reject/i);
+  assert.match(guide, /refs\/pull/i);
+  assert.match(
+    guide,
+    /GitHub Support[\s\S]+pull-request refs[\s\S]+cached views[\s\S]+server garbage collection[\s\S]+LFS/i
+  );
+  assert.match(guide, /blocking exit item[\s\S]+final PASS/i);
+});
+
+test('sensitive-data rewrite captures protected provider-support evidence', () => {
+  const guide = read('docs/security/git-history-remediation.md');
+  const filterInvocations = guide.match(/git\s+-C\s+\$RewriteMirror\s+filter-repo[^\r\n]*(?:`\r?\n[^\r\n]*)*/g) ?? [];
+
+  assert.equal(filterInvocations.length, 2);
+  for (const invocation of filterInvocations) {
+    assert.match(invocation, /--sensitive-data-removal/);
+  }
+  assert.match(guide, /git\s+filter-repo\s+-h/);
+  assert.match(guide, /2\.47/);
+  assert.match(guide, /--sensitive-data-removal/);
+  assert.match(guide, /\$FilterRepoMetadata[\s\S]+changed-refs/);
+  assert.match(guide, /\$FilterRepoMetadata[\s\S]+first-changed-commits/);
+  assert.match(guide, /\$FilterRepoMetadata[\s\S]+orphaned_lfs_objects/);
+  assert.match(guide, /changedPullRequestRefs/);
+  assert.match(guide, /changedPullRequestCount/);
+  assert.match(guide, /firstChangedCommits/);
+  assert.match(guide, /orphanedLfsObjects/);
+  assert.match(guide, /provider-support-evidence\.json/);
+  assert.match(guide, /protected incident directory|protected incident artifact/i);
+  assert.match(guide, /must not enter public logs|do not print/i);
 });
 
 test('replacement cleanup and incident closeout fail closed', () => {
@@ -259,7 +320,15 @@ test('rollback is independently resumable from a protected incident manifest', (
   assert.match(guide, /incident-manifest\.json/);
   assert.match(guide, /expectedRepositorySlug/);
   assert.match(guide, /remoteUrl/);
-  for (const artifact of ['backupMirror', 'backupRefs', 'backupBundle', 'backupEvidence']) {
+  for (const artifact of [
+    'backupMirror',
+    'backupRefs',
+    'backupBundle',
+    'backupEvidence',
+    'postRewriteRefs',
+    'postRewriteEvidence',
+    'providerSupportEvidence',
+  ]) {
     assert.match(guide, new RegExp(`${artifact}\\s*=`));
   }
 
@@ -277,8 +346,112 @@ test('rollback is independently resumable from a protected incident manifest', (
   assert.match(rollback, /Resolve-IncidentChild[\s\S]+RelativePath 'incident-manifest\.json'/);
   assert.match(rollback, /Get-FileHash/);
   assert.match(rollback, /Compare-Object\s+\$RecordedBackupRefs\s+\$CurrentBackupRefs/);
-  assert.match(rollback, /git\s+-C\s+\$BackupMirror\s+push\s+--force\s+--mirror\s+\$RemoteUrl/);
+  assert.match(rollback, /postRewriteCapturedAtUtc/);
+  assert.match(rollback, /pre-rollback-current\.git/);
+  assert.match(rollback, /pre-rollback-current-refs\.txt/);
+  assert.match(rollback, /pre-rollback-current\.bundle/);
+  assert.match(rollback, /pre-rollback-current-checksums\.json/);
+  assert.match(rollback, /Compare-Object\s+\$RecordedPostRewriteRefs\s+\$CurrentRemoteRefs/);
+  assert.match(rollback, /git\s+-C\s+\$BackupMirror\s+push\s+--atomic\s+--force\s+--mirror\s+\$RemoteUrl/);
+
+  const preservationClone = rollback.indexOf('git clone --mirror $RemoteUrl $PreRollbackMirror');
+  const currentRefCapture = rollback.indexOf('$CurrentRemoteRefs = @(');
+  const driftComparison = rollback.indexOf('Compare-Object $RecordedPostRewriteRefs $CurrentRemoteRefs');
+  const rollbackPush = rollback.indexOf('push --atomic --force --mirror $RemoteUrl');
+  assert.ok(preservationClone >= 0, 'missing fresh pre-rollback preservation mirror');
+  assert.ok(currentRefCapture > preservationClone, 'current refs must come from the preservation mirror');
+  assert.ok(driftComparison > currentRefCapture, 'rollback drift comparison must follow current-ref capture');
+  assert.ok(rollbackPush > driftComparison, 'rollback push must follow preservation and drift validation');
 });
+
+test(
+  'closeout refuses descendant reparse points without touching their targets',
+  { skip: process.platform !== 'win32' },
+  t => {
+    const guide = read('docs/security/git-history-remediation.md');
+    const closeout = guide.split('## Protected incident closeout')[1] ?? '';
+    const traversal = extractMarkedPowerShell(closeout, 'TESTED NON-FOLLOWING REPARSE TRAVERSAL');
+    const traversalCall = closeout.lastIndexOf('Assert-NoReparseDescendants -RootPath $IncidentFull');
+    const finalRootValidation = closeout.indexOf('$PreDeleteIncident =');
+    const destructiveCall = closeout.indexOf('Remove-Item -LiteralPath $IncidentFull -Recurse');
+    assert.ok(traversalCall >= 0, 'closeout must invoke the tested descendant traversal');
+    assert.ok(finalRootValidation > traversalCall, 'root must be revalidated after descendant traversal');
+    assert.ok(destructiveCall > finalRootValidation, 'destructive closeout must follow final root validation');
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-closeout-'));
+    const externalRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-external-'));
+    const incidentRoot = join(fixtureRoot, 'incident');
+    const externalMarker = join(externalRoot, 'must-survive.txt');
+    const descendantLink = join(incidentRoot, 'nested', 'external-link');
+    mkdirSync(join(incidentRoot, 'nested'), { recursive: true });
+    writeFileSync(externalMarker, 'preserve', 'utf8');
+
+    try {
+      try {
+        symlinkSync(externalRoot, descendantLink, 'junction');
+      } catch (error) {
+        if (['EPERM', 'EACCES', 'ENOTSUP', 'UNKNOWN'].includes(error?.code)) {
+          t.skip('Windows link creation is unavailable for the sanitized closeout fixture.');
+          return;
+        }
+        throw new Error('Unexpected failure while creating the sanitized closeout fixture.');
+      }
+
+      const encodedRoot = Buffer.from(incidentRoot, 'utf8').toString('base64');
+      const command = [
+        traversal,
+        `$fixtureRoot = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${encodedRoot}'))`,
+        "try { Assert-NoReparseDescendants -RootPath $fixtureRoot; exit 0 } catch { [Console]::Error.WriteLine('Unsafe descendant rejected.'); exit 23 }",
+      ].join('; ');
+      const result = spawnSync(
+        'powershell.exe',
+        [
+          '-NoLogo',
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          Buffer.from(command, 'utf16le').toString('base64'),
+        ],
+        {
+          cwd: root,
+          encoding: 'utf8',
+          windowsHide: true,
+          timeout: 10_000,
+        }
+      );
+
+      assert.equal(result.status, 23, 'descendant reparse point must abort closeout traversal');
+      assert.match(result.stderr, /Unsafe descendant rejected\./);
+      assert.ok(!result.stderr.includes(fixtureRoot), 'fixture failure must not disclose the incident path');
+      assert.ok(!result.stderr.includes(externalRoot), 'fixture failure must not disclose the external path');
+      assert.ok(existsSync(descendantLink), 'rejected traversal must leave the descendant link untouched');
+      assert.ok(existsSync(externalMarker), 'external target must survive rejected traversal');
+      assert.equal(readFileSync(externalMarker, 'utf8'), 'preserve');
+    } finally {
+      const temporaryRoot = resolve(tmpdir());
+      for (const [candidate, expectedPrefix] of [
+        [fixtureRoot, 'easy-rewind-closeout-'],
+        [externalRoot, 'easy-rewind-external-'],
+      ]) {
+        const resolvedCandidate = resolve(candidate);
+        assert.ok(
+          resolvedCandidate.startsWith(`${temporaryRoot}${sep}`) &&
+            basename(resolvedCandidate).startsWith(expectedPrefix),
+          'fixture cleanup target must be an exact sanitized temporary child'
+        );
+      }
+      if (existsSync(descendantLink)) {
+        assert.ok(lstatSync(descendantLink).isSymbolicLink(), 'fixture link must remain non-following during cleanup');
+        unlinkSync(descendantLink);
+      }
+      rmSync(fixtureRoot, { force: true, recursive: true });
+      try {
+        assert.ok(existsSync(externalMarker), 'external target must survive fixture-root cleanup');
+      } finally {
+        rmSync(externalRoot, { force: true, recursive: true });
+      }
+    }
+  }
+);
 
 test('every PowerShell history-remediation block parses without errors', () => {
   const guide = read('docs/security/git-history-remediation.md');
