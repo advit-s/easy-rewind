@@ -104,6 +104,18 @@ test('workspace has one root lockfile and strict reproducible npm settings', () 
   }
 });
 
+test('workspace normalizes tracked text files to LF on every platform', () => {
+  const attributesPath = join(root, '.gitattributes');
+
+  assert.equal(existsSync(attributesPath), true, 'missing root .gitattributes');
+  const attributes = readFileSync(attributesPath, 'utf8')
+    .split(/\r?\n/)
+    .map(line => line.trim())
+    .filter(line => line && !line.startsWith('#'));
+
+  assert.ok(attributes.includes('* text=auto eol=lf'), 'missing repo-wide LF normalization rule');
+});
+
 test('environment example contains placeholders only and backend source is Electron-independent', () => {
   const example = readFileSync(join(root, 'backend', '.env.example'), 'utf8');
   assert.match(example, /^HOST=127\.0\.0\.1$/m);
