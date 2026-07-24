@@ -83,6 +83,10 @@ test('quarantine copies the coherent set byte-for-byte and writes a safe manifes
   const output = JSON.parse(result.stdout);
   assert.equal(output.sensitive, true);
   assert.equal(output.files.length, 4);
+  assert.deepEqual(
+    output.files.map((entry) => entry.name).sort(),
+    [...fixture.files.keys()].sort()
+  );
   assert.match(output.backupTimeUtc, /Z$/);
   assert.equal(output.sqliteOpened, false);
   assert.equal(basename(output.quarantinePath), '20260724T120000000Z');
