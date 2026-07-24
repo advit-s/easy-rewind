@@ -82,6 +82,11 @@ function assertManifestContainment(fixture, manifest) {
       resolve(fixture.dataRoot, entry.name),
       `${entry.name} originalPath must be the fixture source file`
     );
+    assert.equal(
+      entry.backupRelativePath,
+      entry.name,
+      `${entry.name} backupRelativePath must be the root-level filename`
+    );
     const backupPath = resolve(manifest.quarantinePath, entry.backupRelativePath);
     assertPathWithin(backupPath, fixture.root, `${entry.name} backupRelativePath`);
     assertPathWithin(
@@ -171,12 +176,11 @@ function runPowerShell(fixture, repositoryScript, args) {
 function createManifestFixture(fixture, timestamp) {
   const quarantinePath = join(fixture.quarantineRoot, timestamp);
   const manifestPath = join(quarantinePath, 'manifest.json');
-  const backupDirectory = join(quarantinePath, 'files');
-  mkdirSync(backupDirectory, { recursive: true });
+  mkdirSync(quarantinePath, { recursive: true });
 
   const files = requiredNames.map((name) => {
     const bytes = fixture.files.get(name);
-    const backupRelativePath = join('files', name);
+    const backupRelativePath = name;
     writeFileSync(join(quarantinePath, backupRelativePath), bytes);
     return {
       name,
