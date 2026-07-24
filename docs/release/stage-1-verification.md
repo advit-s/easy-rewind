@@ -2,11 +2,11 @@
 
 | Field | Value |
 | --- | --- |
-| Date | 2026-07-24 |
+| Date | 2026-07-25 |
 | Operator | Codex local containment run; Windows account intentionally not recorded |
-| Repository commit | Containment tooling reviewed at `a646b27eb0449f8fc2d3f43191895c9e39acbc0b`; Task 5 hygiene implementation and review fixes at `33dd03b6fb6554b7696bc5ca7c7b3ecbd2806fa9` |
-| Node | `v24.13.0` observed; Stage 1 runtime selection remains pending |
-| npm | `11.6.2` observed; Stage 1 workspace normalization remains pending |
+| Repository commit | Containment tooling reviewed at `a646b27eb0449f8fc2d3f43191895c9e39acbc0b`; Task 5 hygiene at `33dd03b6fb6554b7696bc5ca7c7b3ecbd2806fa9`; Task 6 workspace work at `ea2edcb`, `d814d06`, `9a7bb8e`, and `0d3fa59` |
+| Node | Portable `v24.18.0` verified for development, CI, and standalone execution; packaged Electron runtime validation remains Stage 6 |
+| npm | Portable `11.6.2` verified; exact package-manager and engine contract enforced |
 
 ## Safe reporting
 
@@ -61,20 +61,32 @@ The manifest-bound purge reported exactly four removals. Post-purge verification
 
 | Command | Exit | Evidence summary |
 | --- | --- | --- |
-| `node --version` |  |  |
-| `npm --version` |  |  |
-| `npm ci` |  |  |
-| `npm run scan:secrets` |  |  |
-| `npm run check:hygiene` |  | Pending Task 6 root-script normalization; direct checker commands below are verified |
+| `node --version` | `0` | Verified portable runtime returned `v24.18.0` |
+| `npm --version` | `0` | Verified portable runtime returned `11.6.2` |
+| `npm ci` | `0` | Clean install from the single root lockfile passed |
+| `npm ls --depth=0` | `0` | Dependency tree was clean; exact workspace pins included Nodemailer `9.0.3` |
+| `npm audit --audit-level=high` | `0` | Authorized online audit after the Nodemailer upgrade reported `0` vulnerabilities |
+| Node-ABI `better-sqlite3` load smoke test | `0` | Native module loaded under Node `24.18.0`; this is not Electron-ABI evidence |
+| `npm run scan:secrets` | `0` | Secretlint passed without recording raw scan output |
+| `npm run check:hygiene` | `0` | Root hygiene command passed |
 | `node --test scripts/hygiene/check-repository.test.mjs` | `0` | `63/63` passed, `0` failed, `0` skipped at `33dd03b`; spec and quality reviews passed |
 | `node scripts/hygiene/check-repository.mjs` | `0` | Git-mode repository hygiene check passed |
 | `node scripts/hygiene/check-repository.mjs --filesystem` | `0` | Filesystem-mode repository hygiene check passed without following linked directories |
 | `git check-ignore --quiet -- docs/release/new-evidence.md` | `1` | Expected unignored result; release evidence remains eligible for tracking |
 | `git check-ignore --quiet -- release/artifact.zip` | `0` | Expected ignored result for repository-root release output |
-| `npm run lint` |  |  |
-| `npm run format:check` |  |  |
-| `npm test` |  |  |
-| `npm run verify` |  |  |
+| `npm run test:workspace` | `0` | `26/26` passed, including staged Electron native-rebuild nonmutation/failure-cleanup tests and backend Electron-independence checks |
+| `npm run test:containment` | `0` | `21/21` passed |
+| `npm run test:hygiene` | `0` | `63/63` passed |
+| `npm run test:backend:legacy-safe` | `0` | `57/57` passed; the existing Jest server/timer open-handle warning is recorded as Stage 2 lifecycle debt |
+| `npm run validate:extension` | `0` | Baseline validation passed for `11` extension references |
+| `npm run lint` | `0` | Backend ESLint passed with `0` warnings under `--max-warnings=0` |
+| `npm run build` | `0` | Extension validation and backend/desktop syntax checks passed |
+| `npm run format:check` |  | Pending Task 7 |
+| `npm test` | `0` | Unit/integration component suites passed with the counts recorded above |
+| `npm run verify` |  | Pending Task 7; do not infer a pass from the component evidence |
+| `npm run package:windows` |  | Real Electron native rebuild, packaging, and Windows validation are deferred to Stage 6 |
+
+Task 6 was implemented across `ea2edcb`, `d814d06`, `9a7bb8e`, and `0d3fa59`. Its final quality review reported no findings and readiness `yes`. The staged Electron rebuild tests prove that the shared Node binding is not mutated and that failed staging is cleaned; they do not substitute for rebuilding and loading `better-sqlite3` against Electron `43.2.0` or producing a Windows package in Stage 6.
 
 ## Recovery rehearsal
 
@@ -99,11 +111,11 @@ The rewrite is separate. `scheduled` is not `verified`. The Complete checkbox mu
 
 | Field | Value |
 | --- | --- |
-| Tests | Containment suite `21/21` passed immediately before the live retry; hygiene suite `63/63` passed with `0` skipped; complete Stage 1 verification remains pending |
-| Verification evidence | Live quarantine, ACL, manifest, coherent hash/size, purge, survival, post-purge, exact Task 5 cleanup, repository hygiene, and ignore-boundary checks passed; Task 5 spec and quality reviews passed |
-| Release blockers in Stage 1 scope | Workspace normalization, recovery rehearsal, key revocation, and separate Git-history purge remain unresolved |
+| Tests | Containment `21/21`, workspace `26/26`, hygiene `63/63`, and backend `57/57` passed; the known backend server/timer open handle remains Stage 2 lifecycle debt |
+| Verification evidence | Live quarantine, ACL, manifest, coherent hash/size, purge, survival, exact Task 5 cleanup, normalized portable toolchain, clean dependency install/tree, zero-vulnerability online audit, Node-ABI native load, zero-warning lint, extension validation, Secretlint, hygiene, and build passed; Task 6 quality review reported no findings and ready `yes` |
+| Release blockers in Stage 1 scope | Task 7 formatting/aggregate verification and CI evidence, recovery rehearsal, key revocation, and separate Git-history purge remain unresolved; real Electron native rebuild/package validation remains a Stage 6 obligation |
 | Rollback/recovery | The only preserved quarantine remains intact; recovery rehearsal must use a disposable copy and is pending |
-| Requirement matrix updated | Task 5 rows S1-05 through S1-07 are verified; S1-08 and later rows are not promoted |
-| Decision PASS/FAIL | **FAIL** — Tasks 4 and 5 passed, but the Stage 1 exit gate is not yet satisfied |
+| Requirement matrix updated | Task 6 rows S1-08 through S1-10 are verified; S1-11 and later rows are not promoted |
+| Decision PASS/FAIL | **FAIL** — Tasks 4 through 6 passed, but Task 7 and the remaining Stage 1 exit-gate obligations are not yet satisfied |
 
 Before a requirement-matrix row can be marked `verified`, record stable report section, repository commit, and artifact references for its evidence and recovery.
