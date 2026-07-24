@@ -28,6 +28,38 @@ function Get-CanonicalPath {
   return [EasyRewind.NativePathSafety]::CanonicalizeLocalDrivePath($Path)
 }
 
+function Assert-SafePublicPathForm {
+  param([Parameter(Mandatory=$true)][string]$Path)
+
+  if ([string]::IsNullOrWhiteSpace($Path) -or
+      $Path -match '^(?:\\\\|//|\\\?\?\\)' -or
+      $Path -match '^[A-Za-z]:[^\\/]' -or
+      $Path -match '^[^\\/:]+::') {
+    throw "Public path form is not allowed: $Path"
+  }
+}
+
+function Resolve-PublicExistingLocalPath {
+  param([Parameter(Mandatory=$true)][string]$Path)
+
+  Assert-SafePublicPathForm -Path $Path
+  $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
+  $providerPath = [string]$resolved.ProviderPath
+  if ([string]::IsNullOrWhiteSpace($providerPath)) {
+    $providerPath = [string]$resolved.Path
+  }
+  return Get-CanonicalPath -Path (
+    [System.IO.Path]::GetFullPath($providerPath)
+  )
+}
+
+function Resolve-PublicLocalPath {
+  param([Parameter(Mandatory=$true)][string]$Path)
+
+  Assert-SafePublicPathForm -Path $Path
+  return Get-CanonicalPath -Path ([System.IO.Path]::GetFullPath($Path))
+}
+
 function Test-PathEqual {
   param(
     [Parameter(Mandatory=$true)][string]$Left,
@@ -572,7 +604,7 @@ function Assert-StableSnapshot {
   }
 }
 
-$resolvedSourceRoot = Get-CanonicalPath -Path $SourceRoot
+$resolvedSourceRoot = Resolve-PublicExistingLocalPath -Path $SourceRoot
 Assert-NoEasyRewindProcess -ResolvedSourceRoot $resolvedSourceRoot
 
 if ([string]::IsNullOrWhiteSpace($QuarantineRoot)) {
@@ -583,7 +615,7 @@ if ([string]::IsNullOrWhiteSpace($QuarantineRoot)) {
     [System.Environment]::GetEnvironmentVariable('LOCALAPPDATA')
   ) 'easy-rewind\legacy-backup'
 }
-$resolvedQuarantineRoot = Get-CanonicalPath -Path $QuarantineRoot
+$resolvedQuarantineRoot = Resolve-PublicLocalPath -Path $QuarantineRoot
 
 $parsedTimestamp = [DateTime]::MinValue
 $timestampIsValid = (

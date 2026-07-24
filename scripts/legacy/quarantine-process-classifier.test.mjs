@@ -30,7 +30,7 @@ test('classifies confirmed candidates separately from metadata verification fail
   try {
     const sourceRoot = join(fixtureRoot, 'app');
     const scriptSource = readFileSync(quarantineScript, 'utf8');
-    const mainMarker = '\n$resolvedSourceRoot = Get-CanonicalPath';
+    const mainMarker = '\n$resolvedSourceRoot = Resolve-PublicExistingLocalPath';
     const mainIndex = scriptSource.indexOf(mainMarker);
     assert.notEqual(mainIndex, -1, 'quarantine main marker must remain inspectable');
 

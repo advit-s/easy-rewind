@@ -25,6 +25,31 @@ function Get-CanonicalPath {
   return [EasyRewind.NativePathSafety]::CanonicalizeLocalDrivePath($Path)
 }
 
+function Assert-SafePublicPathForm {
+  param([Parameter(Mandatory=$true)][string]$Path)
+
+  if ([string]::IsNullOrWhiteSpace($Path) -or
+      $Path -match '^(?:\\\\|//|\\\?\?\\)' -or
+      $Path -match '^[A-Za-z]:[^\\/]' -or
+      $Path -match '^[^\\/:]+::') {
+    throw "Public path form is not allowed: $Path"
+  }
+}
+
+function Resolve-PublicExistingLocalPath {
+  param([Parameter(Mandatory=$true)][string]$Path)
+
+  Assert-SafePublicPathForm -Path $Path
+  $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
+  $providerPath = [string]$resolved.ProviderPath
+  if ([string]::IsNullOrWhiteSpace($providerPath)) {
+    $providerPath = [string]$resolved.Path
+  }
+  return Get-CanonicalPath -Path (
+    [System.IO.Path]::GetFullPath($providerPath)
+  )
+}
+
 function Test-PathEqual {
   param(
     [Parameter(Mandatory=$true)][string]$Left,
@@ -136,7 +161,7 @@ function Assert-SnapshotMatchesManifest {
   }
 }
 
-$resolvedManifestPath = Get-CanonicalPath -Path $ManifestPath
+$resolvedManifestPath = Resolve-PublicExistingLocalPath -Path $ManifestPath
 $manifestParent = [System.IO.Directory]::GetParent($resolvedManifestPath)
 if ($null -eq $manifestParent -or
     [System.IO.Path]::GetFileName($resolvedManifestPath) -cne 'manifest.json') {

@@ -419,6 +419,69 @@ test('quarantine copies the coherent set byte-for-byte and writes a safe manifes
   );
 });
 
+test('quarantine normalizes relative dot and forward-separator public paths', () => {
+  const fixture = newFixture();
+  const result = runPowerShell(fixture, repositoryQuarantineScript, [
+    '-SourceRoot',
+    './repo/.',
+    '-QuarantineRoot',
+    './local-app-data/./easy-rewind/legacy-backup',
+    '-Timestamp',
+    '20260724T120000027Z',
+  ]);
+
+  assert.equal(result.status, 0, diagnostic(result));
+  const output = JSON.parse(result.stdout);
+  assertManifestContainment(fixture, output);
+  assert.equal(
+    resolve(output.quarantinePath),
+    resolve(fixture.quarantineRoot, '20260724T120000027Z')
+  );
+});
+
+test('public path normalization still rejects device UNC and ADS forms', () => {
+  const deviceSourceFixture = newFixture();
+  const deviceSource = `\\\\?\\${deviceSourceFixture.sourceRoot}`;
+  const sourceResult = runPowerShell(
+    deviceSourceFixture,
+    repositoryQuarantineScript,
+    [
+      '-SourceRoot',
+      deviceSource,
+      '-QuarantineRoot',
+      deviceSourceFixture.quarantineRoot,
+      '-Timestamp',
+      '20260724T120000028Z',
+    ]
+  );
+  assert.notEqual(sourceResult.status, 0, diagnostic(sourceResult));
+  assert.match(sourceResult.stderr, /canonical|fixed-drive|local-drive|path/i);
+
+  const uncFixture = newFixture();
+  const uncResult = runPowerShell(uncFixture, repositoryQuarantineScript, [
+    '-SourceRoot',
+    uncFixture.sourceRoot,
+    '-QuarantineRoot',
+    '\\\\server\\share\\legacy-backup',
+    '-Timestamp',
+    '20260724T120000029Z',
+  ]);
+  assert.notEqual(uncResult.status, 0, diagnostic(uncResult));
+  assert.match(uncResult.stderr, /canonical|fixed-drive|local-drive|path/i);
+
+  const adsFixture = newFixture();
+  const adsResult = runPowerShell(adsFixture, repositoryQuarantineScript, [
+    '-SourceRoot',
+    adsFixture.sourceRoot,
+    '-QuarantineRoot',
+    `${adsFixture.quarantineRoot}:alternate`,
+    '-Timestamp',
+    '20260724T120000033Z',
+  ]);
+  assert.notEqual(adsResult.status, 0, diagnostic(adsResult));
+  assert.match(adsResult.stderr, /canonical|fixed-drive|local-drive|path/i);
+});
+
 test('quarantine fails closed while any source writer handle is open', () => {
   const fixture = newFixture();
   const writer = openSync(join(fixture.dataRoot, 'easy-rewind.db'), 'r+');
@@ -645,6 +708,41 @@ test('manifest-bound purge refuses tampered backups and preserves every source',
 
   assert.notEqual(purge.status, 0, diagnostic(purge));
   assert.match(purge.stderr, /backup checksum mismatch/i, diagnostic(purge));
+  for (const [name, bytes] of fixture.files) {
+    assert.deepEqual(readFileSync(join(fixture.dataRoot, name)), bytes);
+  }
+});
+
+test('manifest-bound purge normalizes a relative dot manifest path', () => {
+  const fixture = newFixture();
+  const manifest = createManifestFixture(fixture, '20260724T120000034Z');
+  const relativeManifest = `./${relative(fixture.root, manifest.manifestPath)
+    .replaceAll('\\', '/')
+    .replace('/manifest.json', '/./manifest.json')}`;
+  const purge = runPurgePowerShell(
+    fixture,
+    repositoryPurgeScript,
+    relativeManifest
+  );
+
+  assert.equal(purge.status, 0, diagnostic(purge));
+  for (const name of fixture.files.keys()) {
+    assert.equal(existsSync(join(fixture.dataRoot, name)), false);
+  }
+});
+
+test('manifest-bound purge rejects a device-prefixed public manifest path', () => {
+  const fixture = newFixture();
+  const manifest = createManifestFixture(fixture, '20260724T120000035Z');
+  const deviceManifest = `\\\\?\\${manifest.manifestPath}`;
+  const purge = runPurgePowerShell(
+    fixture,
+    repositoryPurgeScript,
+    deviceManifest
+  );
+
+  assert.notEqual(purge.status, 0, diagnostic(purge));
+  assert.match(purge.stderr, /canonical|fixed-drive|local-drive|path/i);
   for (const [name, bytes] of fixture.files) {
     assert.deepEqual(readFileSync(join(fixture.dataRoot, name)), bytes);
   }
