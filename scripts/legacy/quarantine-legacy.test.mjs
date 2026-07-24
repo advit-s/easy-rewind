@@ -294,6 +294,28 @@ test('quarantine copies the coherent set byte-for-byte and writes a safe manifes
     assert.deepEqual(readFileSync(join(fixture.dataRoot, name)), bytes);
   }
   assert.equal(readFileSync(sourceSentinel, 'utf8'), 'keep');
+
+  const quarantineSource = readFileSync(repositoryQuarantineScript, 'utf8');
+  assert.match(
+    quarantineSource,
+    /if \(\$PSVersionTable\.PSEdition -eq 'Core'\) \{[\s\S]*?\[System\.IO\.FileSystemAclExtensions\]::SetAccessControl\([\s\S]*?\} else \{\s*\$directory\.SetAccessControl\(\$existingSecurity\)/,
+    'PowerShell Core must use the static API while Windows PowerShell uses instance binding'
+  );
+  assert.match(
+    quarantineSource,
+    /\[System\.Text\.RegularExpressions\.Regex\]::Escape\(/,
+    'command-line source matching must escape the canonical source root'
+  );
+  assert.doesNotMatch(
+    quarantineSource,
+    /\.IndexOf\(\$ResolvedSourceRoot/,
+    'process association must not use substring matching'
+  );
+  assert.doesNotMatch(
+    quarantineSource,
+    /\$cannotInspect(?:GenericRuntime|PortServer)/,
+    'unreadable generic runtimes are not established Easy Rewind candidates'
+  );
 });
 
 test('quarantine fails closed if any required legacy file is absent', () => {

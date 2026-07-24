@@ -62,6 +62,69 @@ function Test-PathEqual {
   return [string]::Equals($Left, $Right, $pathComparison)
 }
 
+function Test-ExecutableReferencesSourceRoot {
+  param(
+    [Parameter(Mandatory=$true)][AllowEmptyString()][string]$ExecutablePath,
+    [Parameter(Mandatory=$true)][string]$ResolvedSourceRoot
+  )
+
+  if ([string]::IsNullOrWhiteSpace($ExecutablePath)) {
+    return $false
+  }
+  try {
+    $canonicalExecutablePath = Get-CanonicalPath -Path $ExecutablePath
+  } catch {
+    return $false
+  }
+  if (Test-PathEqual -Left $canonicalExecutablePath -Right $ResolvedSourceRoot) {
+    return $true
+  }
+
+  $trimmedSourceRoot = $ResolvedSourceRoot.TrimEnd([char[]]@('\', '/'))
+  $sourceDescendantPrefix = (
+    $trimmedSourceRoot + [System.IO.Path]::DirectorySeparatorChar
+  )
+  return $canonicalExecutablePath.StartsWith(
+    $sourceDescendantPrefix,
+    $pathComparison
+  )
+}
+
+function Test-CommandLineReferencesSourceRoot {
+  param(
+    [Parameter(Mandatory=$true)][AllowEmptyString()][string]$CommandLine,
+    [Parameter(Mandatory=$true)][string]$ResolvedSourceRoot
+  )
+
+  if ([string]::IsNullOrWhiteSpace($CommandLine)) {
+    return $false
+  }
+
+  $trimmedSourceRoot = $ResolvedSourceRoot.TrimEnd([char[]]@('\', '/'))
+  $sourceRootForms = @($trimmedSourceRoot)
+  if ($trimmedSourceRoot.Contains('\')) {
+    $sourceRootForms += $trimmedSourceRoot.Replace('\', '/')
+  }
+  foreach ($sourceRootForm in @($sourceRootForms | Select-Object -Unique)) {
+    $escapedSourceRoot = [System.Text.RegularExpressions.Regex]::Escape(
+      $sourceRootForm
+    )
+    $sourceTokenPattern = (
+      '(?:^|[\s"''=])' +
+      $escapedSourceRoot +
+      '(?:[\\/"''\s]|$)'
+    )
+    if ([System.Text.RegularExpressions.Regex]::IsMatch(
+        $CommandLine,
+        $sourceTokenPattern,
+        [System.Text.RegularExpressions.RegexOptions]::IgnoreCase
+      )) {
+      return $true
+    }
+  }
+  return $false
+}
+
 function Assert-NoEasyRewindProcess {
   param([Parameter(Mandatory=$true)][string]$ResolvedSourceRoot)
 
@@ -260,29 +323,22 @@ namespace EasyRewind {
     $isProductExecutable = $name -match '^(?i:easy[ -]?rewind)(?:\.exe)?$'
     $isGenericRuntime = $name -match '^(?i:node|electron)(?:\.exe)?$'
     $referencesSource = (
-      $executablePath.IndexOf($ResolvedSourceRoot, $pathComparison) -ge 0 -or
-      $commandLine.IndexOf($ResolvedSourceRoot, $pathComparison) -ge 0
+      (Test-ExecutableReferencesSourceRoot `
+        -ExecutablePath $executablePath `
+        -ResolvedSourceRoot $ResolvedSourceRoot) -or
+      (Test-CommandLineReferencesSourceRoot `
+        -CommandLine $commandLine `
+        -ResolvedSourceRoot $ResolvedSourceRoot)
     )
     $isPortServer = (
       $name -match '^(?i:node)(?:\.exe)?$' -and
       $commandLine -match '(?i)(?:^|[\\/"\s])server\.js(?:["\s]|$)' -and
       $listeningPids -contains [int]$process.ProcessId
     )
-    $cannotInspectPortServer = (
-      $name -match '^(?i:node)(?:\.exe)?$' -and
-      $listeningPids -contains [int]$process.ProcessId -and
-      [string]::IsNullOrWhiteSpace($commandLine)
-    )
-    $cannotInspectGenericRuntime = (
-      $isGenericRuntime -and
-      [string]::IsNullOrWhiteSpace($commandLine)
-    )
 
     if ($isProductExecutable -or
         ($isGenericRuntime -and $referencesSource) -or
-        $isPortServer -or
-        $cannotInspectPortServer -or
-        $cannotInspectGenericRuntime) {
+        $isPortServer) {
       $null = $matchingPids.Add([int]$process.ProcessId)
     }
   }
@@ -327,7 +383,14 @@ function Set-AndVerifyPrivateDirectoryAcl {
   )
   $existingSecurity.ResetAccessRule($currentUserRule)
   $directory = Get-Item -LiteralPath $Path -Force
-  $directory.SetAccessControl($existingSecurity)
+  if ($PSVersionTable.PSEdition -eq 'Core') {
+    [System.IO.FileSystemAclExtensions]::SetAccessControl(
+      [System.IO.DirectoryInfo]$directory,
+      [System.Security.AccessControl.DirectorySecurity]$existingSecurity
+    )
+  } else {
+    $directory.SetAccessControl($existingSecurity)
+  }
 
   $verified = Get-Acl -LiteralPath $Path
   if (-not $verified.AreAccessRulesProtected) {
