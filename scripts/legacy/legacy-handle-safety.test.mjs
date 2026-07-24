@@ -21,6 +21,67 @@ const repositoryHelper = join(
   'legacy-handle-safety.ps1'
 );
 
+test('directory reparse policy allows only non-name-surrogate Microsoft Cloud Filter tags', () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-reparse-policy-'));
+  try {
+    const helperPath = join(fixtureRoot, basename(repositoryHelper));
+    copyFileSync(repositoryHelper, helperPath);
+    const driverPath = join(fixtureRoot, 'reparse-policy-driver.ps1');
+    writeFileSync(
+      driverPath,
+      `
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+. '${helperPath.replaceAll("'", "''")}'
+$tags = @(
+  '9000701A',
+  '9000601A',
+  'A0000003',
+  'A000000C',
+  'A0007777',
+  '8000001B'
+) | ForEach-Object {
+  [Convert]::ToUInt32($_, 16)
+}
+@(
+  $tags | ForEach-Object {
+    [EasyRewind.NativeReparsePolicy]::IsAllowedDirectoryReparseTag($_)
+  }
+) | ConvertTo-Json -Compress
+`
+    );
+
+    const result = spawnSync(
+      'powershell.exe',
+      [
+        '-NoLogo',
+        '-NonInteractive',
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        driverPath,
+      ],
+      {
+        cwd: fixtureRoot,
+        encoding: 'utf8',
+        timeout: 10_000,
+      }
+    );
+    assert.equal(
+      result.status,
+      0,
+      `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+    );
+    assert.deepEqual(
+      JSON.parse(result.stdout),
+      [true, true, false, false, false, false]
+    );
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});
+
 test('delete-by-handle rolls back every prior disposition before close', () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-handle-safety-'));
   try {

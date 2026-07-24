@@ -419,6 +419,25 @@ test('quarantine copies the coherent set byte-for-byte and writes a safe manifes
   );
 });
 
+test('quarantine defaults to fixture-local LOCALAPPDATA when QuarantineRoot is omitted', () => {
+  const fixture = newFixture();
+  const result = runPowerShell(fixture, repositoryQuarantineScript, [
+    '-SourceRoot',
+    fixture.sourceRoot,
+    '-Timestamp',
+    '20260724T120000099Z',
+  ]);
+
+  assert.equal(result.status, 0, diagnostic(result));
+  const output = JSON.parse(result.stdout);
+  assertManifestContainment(fixture, output);
+  assert.equal(
+    resolve(output.quarantinePath),
+    resolve(fixture.quarantineRoot, '20260724T120000099Z')
+  );
+  assert.equal(existsSync(output.manifestPath), true);
+});
+
 test('quarantine normalizes relative dot and forward-separator public paths', () => {
   const fixture = newFixture();
   const result = runPowerShell(fixture, repositoryQuarantineScript, [

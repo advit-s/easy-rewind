@@ -30,6 +30,7 @@ namespace EasyRewind {
     internal const uint FlagBackupSemantics = 0x02000000;
     internal const uint FlagOpenReparsePoint = 0x00200000;
     internal const int FileDispositionInfo = 4;
+    internal const int FileAttributeTagInfo = 9;
     internal const int ErrorSharingViolation = 32;
     internal const int ErrorLockViolation = 33;
     internal const int ErrorFileNotFound = 2;
@@ -72,6 +73,12 @@ namespace EasyRewind {
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal struct FileAttributeTagInformation {
+      internal uint FileAttributes;
+      internal uint ReparseTag;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct UnicodeString {
       internal ushort Length;
       internal ushort MaximumLength;
@@ -110,6 +117,15 @@ namespace EasyRewind {
     internal static extern bool GetFileInformationByHandle(
       SafeFileHandle fileHandle,
       out ByHandleFileInformation information
+    );
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal static extern bool GetFileInformationByHandleEx(
+      SafeFileHandle fileHandle,
+      int fileInformationClass,
+      out FileAttributeTagInformation fileInformation,
+      uint bufferSize
     );
 
     [DllImport("kernel32.dll", SetLastError = true)]
@@ -347,11 +363,51 @@ namespace EasyRewind {
         );
       }
     }
+
+    internal static uint GetReparseTag(
+      SafeFileHandle handle,
+      string path
+    ) {
+      FileAttributeTagInformation information;
+      uint size = (uint)Marshal.SizeOf(typeof(FileAttributeTagInformation));
+      if (!GetFileInformationByHandleEx(
+          handle,
+          FileAttributeTagInfo,
+          out information,
+          size
+        )) {
+        throw new Win32Exception(
+          Marshal.GetLastWin32Error(),
+          "Unable to inspect held directory reparse tag: " + path
+        );
+      }
+      if ((information.FileAttributes & AttributeReparsePoint) == 0 ||
+          information.ReparseTag == 0) {
+        throw new IOException(
+          "Held directory reparse metadata is inconsistent: " + path
+        );
+      }
+      return information.ReparseTag;
+    }
   }
 
   public static class NativePathSafety {
     public static string CanonicalizeLocalDrivePath(string path) {
       return NativeMethods.CanonicalizeLocalDrivePath(path);
+    }
+  }
+
+  public static class NativeReparsePolicy {
+    private const uint IoReparseTagCloud = 0x9000001A;
+    private const uint IoReparseTagCloudMask = 0x0000F000;
+    private const uint IoReparseTagNameSurrogate = 0x20000000;
+
+    public static bool IsAllowedDirectoryReparseTag(uint reparseTag) {
+      bool isNameSurrogate =
+        (reparseTag & IoReparseTagNameSurrogate) != 0;
+      bool isCloudFamily =
+        (reparseTag & ~IoReparseTagCloudMask) == IoReparseTagCloud;
+      return !isNameSurrogate && isCloudFamily;
     }
   }
 
@@ -810,7 +866,13 @@ namespace EasyRewind {
         throw new IOException("Path component is not a directory: " + fullPath);
       }
       if ((information.FileAttributes & NativeMethods.AttributeReparsePoint) != 0) {
-        throw new IOException("Reparse or junction directory is not allowed: " + fullPath);
+        uint reparseTag = NativeMethods.GetReparseTag(safeHandle, fullPath);
+        if (!NativeReparsePolicy.IsAllowedDirectoryReparseTag(reparseTag)) {
+          throw new IOException(
+            "Reparse or junction directory is not allowed (tag 0x" +
+              reparseTag.ToString("X8") + "): " + fullPath
+          );
+        }
       }
       NativeMethods.ValidateFinalPath(safeHandle, fullPath);
       return new NativeDirectoryHandle(fullPath, safeHandle);
