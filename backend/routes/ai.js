@@ -34,7 +34,7 @@ router.post('/quick-lookup', async (req, res) => {
       database
         .prepare('INSERT INTO search_log (user_id, query, found) VALUES (?, ?, 1)')
         .run(getUserId(req), cleanTerm);
-    } catch (_) {}
+    } catch {}
     return res.json({
       term: cached.term,
       definition: cached.answer,
@@ -110,7 +110,7 @@ Also suggest 2 related tech terms they might want to learn next as a JSON array 
         try {
           suggestions = JSON.parse(suggestionsMatch[1]);
           definition = definition.replace(/---SUGGESTIONS\s*\[[\s\S]*?\]\s*$/, '').trim();
-        } catch (_) {}
+        } catch {}
       }
     }
   } catch (err) {
@@ -123,10 +123,10 @@ Also suggest 2 related tech terms they might want to learn next as a JSON array 
   // Step 4: Cache
   try {
     database.prepare('INSERT INTO cache (term, answer) VALUES (?, ?)').run(cleanTerm, definition);
-  } catch (_) {}
+  } catch {}
   try {
     database.prepare('INSERT INTO search_log (user_id, query, found) VALUES (?, ?, 1)').run(getUserId(req), cleanTerm);
-  } catch (_) {}
+  } catch {}
 
   return res.json({ term: cleanTerm, definition, source: 'ai', suggestions });
 });
@@ -341,7 +341,7 @@ ${pageContent.slice(0, 4000)}
 
 Summary:`;
         summary = await callGemini(prompt);
-      } catch (_) {}
+      } catch {}
     }
 
     if (!summary) {
@@ -367,7 +367,7 @@ Summary:`;
               database
                 .prepare('INSERT OR REPLACE INTO item_embeddings (item_id, embedding, model) VALUES (?, ?, ?)')
                 .run(itemId, JSON.stringify(vec), config.apiKey?.startsWith('sk-') ? 'openai' : 'gemini');
-            } catch (_) {}
+            } catch {}
           }
         })
         .catch(() => {});

@@ -264,7 +264,7 @@ function getDb() {
   // ─── Migrations (for existing databases) ────
   try {
     db.exec(`ALTER TABLE memory_connections ADD COLUMN source TEXT DEFAULT 'manual'`);
-  } catch (_) {
+  } catch {
     /* column already exists */
   }
 
@@ -275,7 +275,7 @@ function getDb() {
         title, content, tags, content='items', content_rowid='id'
       );
     `);
-  } catch (_) {
+  } catch {
     /* FTS5 not available — hybrid search falls back to LIKE queries */
   }
 
@@ -453,7 +453,7 @@ function calculateNextReview(quality, card = {}) {
   const interval = Math.max(0, parseInt(card.interval_days) || 0);
   const reps = parseInt(card.repetitions) || 0;
 
-  let newEf, newInterval, newReps;
+  let newInterval, newReps;
 
   if (quality >= 3) {
     // Correct recall
@@ -472,7 +472,7 @@ function calculateNextReview(quality, card = {}) {
   }
 
   // Update ease factor using SM-2 formula
-  newEf = Math.max(1.3, ef + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)));
+  const newEf = Math.max(1.3, ef + (0.1 - (5 - quality) * (0.08 + (5 - quality) * 0.02)));
 
   const nextDate = new Date(Date.now() + newInterval * 24 * 60 * 60 * 1000);
   return {
@@ -516,7 +516,7 @@ function isValidId(id) {
   return !isNaN(num) && num > 0 && String(num) === String(id);
 }
 
-async function sendPushNotification(userId, title, body, data = {}) {
+async function sendPushNotification(userId, title, body, _data = {}) {
   console.log(`[Push] Would notify ${userId}: "${title}" — ${body}`);
 }
 
@@ -709,7 +709,7 @@ Tags:`;
   }
 }
 
-function storeItemTags(database, itemId, tags, userId) {
+function storeItemTags(database, itemId, tags, _userId) {
   if (!tags || tags.length === 0) return;
 
   database.prepare('DELETE FROM item_tags WHERE item_id = ?').run(itemId);
@@ -762,7 +762,7 @@ function detectSourceType(url) {
       pathSegments.some(s => ['docs', 'learn', 'tutorial', 'guide', 'manual', 'reference'].includes(s)) ||
       pathSegments.some(s => s.startsWith('doc') && s.length < 10);
     if (isDocsDomain || hasDocsPath) return 'docs';
-  } catch (_) {
+  } catch {
     /* Invalid URL — treat as web */
   }
   return 'web';

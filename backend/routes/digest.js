@@ -87,7 +87,7 @@ router.get('/digest/:id', (req, res) => {
     try {
       digest.top_topics = JSON.parse(digest.top_topics || '[]');
       digest.top_items = JSON.parse(digest.top_items || '[]');
-    } catch (_) {
+    } catch {
       digest.top_topics = [];
       digest.top_items = [];
     }
@@ -228,7 +228,7 @@ Write a friendly, encouraging summary that highlights what they've learned this 
 
           summary = await callGemini(prompt);
           if (summary) summary = summary.slice(0, 1000);
-        } catch (_) {
+        } catch {
           // Fallback summary
           summary = `You saved ${bookmarkCount} bookmarks, took ${noteCount} notes, captured ${highlightCount} highlights, and created ${flashcardCount} flashcards. ${quizStats?.total > 0 ? `Quiz accuracy: ${quizAccuracy}%.` : ''}`;
         }

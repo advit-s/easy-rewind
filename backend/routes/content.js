@@ -84,7 +84,7 @@ router.post('/bookmark', (req, res) => {
           repeat_interval_days,
           max_repeats,
         });
-      } catch (_) {}
+      } catch {}
     }
 
     return res.json({ success: true, bookmark });
@@ -194,7 +194,7 @@ router.get('/search', (req, res) => {
       database
         .prepare('INSERT INTO search_log (user_id, query, found) VALUES (?, ?, ?)')
         .run(user_id, cleanQuery, results.length > 0 || noteResults.length > 0 ? 1 : 0);
-    } catch (_) {}
+    } catch {}
 
     return res.json({
       results: results || [],
@@ -299,7 +299,7 @@ router.post('/notes', (req, res) => {
           repeat_interval_days,
           max_repeats,
         });
-      } catch (_) {}
+      } catch {}
     }
 
     return res.json({ success: true, note });
@@ -521,7 +521,7 @@ router.delete('/reminders/:id', (req, res) => {
   try {
     database.prepare('DELETE FROM reminders WHERE id = ? AND user_id = ?').run(id, user_id);
     return res.json({ success: true });
-  } catch (err) {
+  } catch {
     return res.status(500).json({ error: 'Failed to delete reminder.' });
   }
 });

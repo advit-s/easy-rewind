@@ -99,7 +99,6 @@ app.use((req, res, next) => {
   // Capture response finish
   res.on('finish', () => {
     const duration = Date.now() - start;
-    const level = res.statusCode >= 400 ? 'WARN' : 'INFO';
     const emoji = res.statusCode >= 500 ? '❌' : res.statusCode >= 400 ? '⚠️' : '✅';
     console.log(`${emoji} [${timestamp}] ${req.method} ${req.originalUrl} → ${res.statusCode} (${duration}ms)`);
   });
@@ -134,7 +133,7 @@ app.use('/api', apiRoutes);
 // Global Error Handler
 // Catches any unhandled errors and returns clean JSON responses
 // ─────────────────────────────────────────────
-app.use((err, req, res, next) => {
+app.use((err, req, res, _next) => {
   console.error('[Server Error]', err.message);
 
   // CORS errors
@@ -187,7 +186,7 @@ app.listen(PORT, () => {
             headers: { 'Content-Type': 'application/json', 'x-user-id': 'system' },
           }
         );
-      } catch (_) {
+      } catch {
         /* silent — server self-check is best-effort */
       }
     },
@@ -234,10 +233,10 @@ app.listen(PORT, () => {
         try {
           const { saveSettings } = require('./routes/helpers');
           saveSettings();
-        } catch (_) {}
+        } catch {}
 
         console.log(`[Digest] Auto-generated weekly digest at ${now.toISOString()}`);
-      } catch (_) {
+      } catch {
         /* silent — best-effort */
       }
     },

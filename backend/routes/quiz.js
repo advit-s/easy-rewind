@@ -13,7 +13,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { getDb, getUserId, sanitize, isValidId } = require('./helpers');
+const { getDb, getUserId } = require('./helpers');
 
 // ─────────────────────────────────────────────
 // GET /api/quiz/random — Random item for recall

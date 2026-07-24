@@ -19,7 +19,6 @@ const {
   sanitize,
   sanitizeUserId,
   getUserId,
-  normalizeDate,
   saveSettings,
 } = require('./helpers');
 
@@ -58,7 +57,7 @@ router.post('/session', (req, res) => {
       for (const table of tables) {
         database.prepare(`UPDATE ${table} SET user_id = ? WHERE user_id = 'anonymous'`).run(userId);
       }
-    } catch (_) {}
+    } catch {}
   }
 
   return res.json({
@@ -301,7 +300,7 @@ Format using plain text with markdown headers.`;
       database
         .prepare("UPDATE research_queue SET status = 'failed', error_message = ? WHERE id = ?")
         .run(err.message, id);
-    } catch (_) {}
+    } catch {}
   }
 }
 
@@ -408,7 +407,7 @@ router.delete('/push-subscribe/:id', (req, res) => {
   try {
     database.prepare('DELETE FROM push_subscriptions WHERE id = ? AND user_id = ?').run(id, user_id);
     return res.json({ success: true });
-  } catch (err) {
+  } catch {
     return res.status(500).json({ error: 'Failed to unsubscribe.' });
   }
 });
@@ -699,7 +698,7 @@ router.post('/log', (req, res) => {
         (stack || '').slice(0, 2000),
         data ? JSON.stringify(data).slice(0, 2000) : null
       );
-  } catch (_) {
+  } catch {
     /* best-effort */
   }
 
@@ -722,7 +721,7 @@ router.get('/logs', (req, res) => {
     params.push(limit);
     const logs = database.prepare(query).all(...params);
     return res.json({ logs: logs || [], total: logs.length });
-  } catch (err) {
+  } catch {
     return res.status(500).json({ error: 'Failed to load logs.' });
   }
 });

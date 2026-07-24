@@ -12,7 +12,6 @@ const {
   getDb,
   getUserId,
   sanitize,
-  isValidId,
   normalizeDate,
   generateEmbedding,
   cosineSimilarity,
@@ -113,7 +112,7 @@ router.get('/highlights/stats', (req, res) => {
       .prepare(`SELECT color, COUNT(*) as count FROM highlights WHERE user_id = ? GROUP BY color ORDER BY count DESC`)
       .all(uid);
     return res.json({ total, perPage, colors });
-  } catch (err) {
+  } catch {
     return res.status(500).json({ error: 'Failed to load stats.' });
   }
 });
@@ -657,7 +656,7 @@ router.post('/connections/discover', async (req, res) => {
 
     for (const pair of topPairs) {
       let relationship = 'related';
-      let confidence = pair.score;
+      const confidence = pair.score;
 
       if (ai && pair.score > 0.15) {
         try {
@@ -688,7 +687,7 @@ Respond with just the relationship word, nothing else.`;
           if (validRelationships.includes(result?.trim().toLowerCase())) {
             relationship = result.trim().toLowerCase();
           }
-        } catch (_) {}
+        } catch {}
       }
 
       try {
@@ -711,7 +710,7 @@ Respond with just the relationship word, nothing else.`;
           .run(user_id, pair.b.id, pair.a.id, relationship, Math.round(confidence * 100) / 100);
 
         discovered++;
-      } catch (_) {}
+      } catch {}
     }
 
     return res.json({
@@ -734,7 +733,7 @@ router.delete('/connections/:id', (req, res) => {
   try {
     database.prepare('DELETE FROM memory_connections WHERE id = ? AND user_id = ?').run(id, user_id);
     return res.json({ success: true });
-  } catch (err) {
+  } catch {
     return res.status(500).json({ error: 'Failed to delete connection.' });
   }
 });

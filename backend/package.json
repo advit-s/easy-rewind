@@ -13,7 +13,7 @@
     "dev": "nodemon server.js",
     "test": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js --forceExit --detectOpenHandles",
     "test:watch": "node --experimental-vm-modules ../node_modules/jest/bin/jest.js --watch --forceExit",
-    "lint": "eslint . --ignore-pattern node_modules/ --ignore-pattern tests/",
+    "lint": "eslint . --ignore-pattern node_modules/ --ignore-pattern tests/ --max-warnings=0",
     "format": "prettier --write \"**/*.{js,json,css,html}\"",
     "format:check": "prettier --check \"**/*.{js,json,css,html}\""
   },
