@@ -7,6 +7,7 @@ param(
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'legacy-handle-safety.ps1')
 
 $requiredNames = @(
   'easy-rewind.db',
@@ -35,22 +36,6 @@ function Get-CanonicalExistingDirectory {
     throw "Directory does not exist: $Path"
   }
   return Get-CanonicalPath -Path $item.FullName
-}
-
-function Get-OrdinaryFileState {
-  param([Parameter(Mandatory=$true)][string]$Path)
-
-  $item = Get-Item -LiteralPath $Path -Force
-  if (-not ($item -is [System.IO.FileInfo]) -or
-      (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
-    throw "Required path is not an ordinary file: $Path"
-  }
-
-  $hash = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToUpperInvariant()
-  return [pscustomobject]@{
-    Size = [long]$item.Length
-    Hash = $hash
-  }
 }
 
 function Test-PathEqual {
@@ -390,28 +375,20 @@ namespace EasyRewind {
 }
 
 function Set-AndVerifyPrivateDirectoryAcl {
-  param([Parameter(Mandatory=$true)][string]$Path)
+  param(
+    [Parameter(Mandatory=$true)][string]$Path,
+    [Parameter(Mandatory=$true)]
+    [EasyRewind.NativeDirectoryHandle]$NativeHandle
+  )
 
   if (-not $isWindowsPlatform) {
     return
   }
-
-  $currentIdentity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-  $currentSid = $currentIdentity.User
-  if ($null -eq $currentSid) {
-    throw 'Cannot determine the current Windows user SID.'
-  }
-
-  $existingSecurity = Get-Acl -LiteralPath $Path
-  $existingOwnerSid = (New-Object System.Security.Principal.NTAccount(
-    $existingSecurity.Owner
-  )).
-    Translate([System.Security.Principal.SecurityIdentifier])
-  if ($existingOwnerSid.Value -ne $currentSid.Value) {
-    $existingSecurity.SetOwner($currentSid)
-  }
-  $existingSecurity.SetAccessRuleProtection($true, $false)
-  $currentUserRule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+  $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+  $security = New-Object System.Security.AccessControl.DirectorySecurity
+  $security.SetOwner($currentSid)
+  $security.SetAccessRuleProtection($true, $false)
+  $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
     $currentSid,
     [System.Security.AccessControl.FileSystemRights]::FullControl,
     (
@@ -421,16 +398,70 @@ function Set-AndVerifyPrivateDirectoryAcl {
     [System.Security.AccessControl.PropagationFlags]::None,
     [System.Security.AccessControl.AccessControlType]::Allow
   )
-  $existingSecurity.ResetAccessRule($currentUserRule)
+  $null = $security.AddAccessRule($rule)
+  $NativeHandle.ApplySecurityDescriptor(
+    $security.GetSecurityDescriptorBinaryForm()
+  )
+  $accessSecurity = New-Object System.Security.AccessControl.DirectorySecurity
+  $accessSecurity.SetAccessRuleProtection($true, $false)
+  $null = $accessSecurity.AddAccessRule($rule)
   $directory = Get-Item -LiteralPath $Path -Force
   if ($PSVersionTable.PSEdition -eq 'Core') {
     [System.IO.FileSystemAclExtensions]::SetAccessControl(
       [System.IO.DirectoryInfo]$directory,
-      [System.Security.AccessControl.DirectorySecurity]$existingSecurity
+      $accessSecurity
     )
   } else {
-    $directory.SetAccessControl($existingSecurity)
+    $directory.SetAccessControl($accessSecurity)
   }
+  Assert-ExactPrivateAcl -Path $Path -IsDirectory $true -CurrentSid $currentSid
+}
+
+function Set-AndVerifyPrivateFileAcl {
+  param(
+    [Parameter(Mandatory=$true)][string]$Path,
+    [Parameter(Mandatory=$true)]
+    [EasyRewind.NativeHandleFile]$NativeHandle
+  )
+
+  if (-not $isWindowsPlatform) {
+    return
+  }
+  $currentSid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+  $security = New-Object System.Security.AccessControl.FileSecurity
+  $security.SetOwner($currentSid)
+  $security.SetAccessRuleProtection($true, $false)
+  $rule = New-Object System.Security.AccessControl.FileSystemAccessRule(
+    $currentSid,
+    [System.Security.AccessControl.FileSystemRights]::FullControl,
+    [System.Security.AccessControl.AccessControlType]::Allow
+  )
+  $null = $security.AddAccessRule($rule)
+  $NativeHandle.ApplySecurityDescriptor(
+    $security.GetSecurityDescriptorBinaryForm()
+  )
+  $accessSecurity = New-Object System.Security.AccessControl.FileSecurity
+  $accessSecurity.SetAccessRuleProtection($true, $false)
+  $null = $accessSecurity.AddAccessRule($rule)
+  $file = Get-Item -LiteralPath $Path -Force
+  if ($PSVersionTable.PSEdition -eq 'Core') {
+    [System.IO.FileSystemAclExtensions]::SetAccessControl(
+      [System.IO.FileInfo]$file,
+      $accessSecurity
+    )
+  } else {
+    $file.SetAccessControl($accessSecurity)
+  }
+  Assert-ExactPrivateAcl -Path $Path -IsDirectory $false -CurrentSid $currentSid
+}
+
+function Assert-ExactPrivateAcl {
+  param(
+    [Parameter(Mandatory=$true)][string]$Path,
+    [Parameter(Mandatory=$true)][bool]$IsDirectory,
+    [Parameter(Mandatory=$true)]
+    [System.Security.Principal.SecurityIdentifier]$CurrentSid
+  )
 
   $verified = Get-Acl -LiteralPath $Path
   if (-not $verified.AreAccessRulesProtected) {
@@ -439,36 +470,135 @@ function Set-AndVerifyPrivateDirectoryAcl {
 
   $ownerSid = (New-Object System.Security.Principal.NTAccount($verified.Owner)).
     Translate([System.Security.Principal.SecurityIdentifier])
-  if ($ownerSid.Value -ne $currentSid.Value) {
+  if ($ownerSid.Value -ne $CurrentSid.Value) {
     throw "Quarantine owner is not the current user: $Path"
   }
-
-  $hasExclusiveFullControl = $false
-  $accessRules = $verified.GetAccessRules(
+  $accessRules = @($verified.GetAccessRules(
     $true,
     $true,
     [System.Security.Principal.SecurityIdentifier]
-  )
-  foreach ($accessRule in $accessRules) {
-    if ($accessRule.IdentityReference.Value -ne $currentSid.Value) {
-      throw "Quarantine ACL contains access for another SID: $Path"
-    }
-    $requiredInheritance = (
+  ))
+  if ($accessRules.Count -ne 1) {
+    throw "Quarantine ACL must contain exactly one access rule: $Path"
+  }
+  $accessRule = $accessRules[0]
+  $expectedInheritance = if ($IsDirectory) {
+    (
       [System.Security.AccessControl.InheritanceFlags]::ContainerInherit -bor
       [System.Security.AccessControl.InheritanceFlags]::ObjectInherit
     )
-    if ($accessRule.AccessControlType -eq
-          [System.Security.AccessControl.AccessControlType]::Allow -and
-        (($accessRule.FileSystemRights -band
-            [System.Security.AccessControl.FileSystemRights]::FullControl) -eq
-          [System.Security.AccessControl.FileSystemRights]::FullControl) -and
-        (($accessRule.InheritanceFlags -band $requiredInheritance) -eq
-          $requiredInheritance)) {
-      $hasExclusiveFullControl = $true
+  } else {
+    [System.Security.AccessControl.InheritanceFlags]::None
+  }
+  if ($accessRule.IdentityReference.Value -ne $CurrentSid.Value -or
+      $accessRule.AccessControlType -ne
+        [System.Security.AccessControl.AccessControlType]::Allow -or
+      $accessRule.FileSystemRights -ne
+        [System.Security.AccessControl.FileSystemRights]::FullControl -or
+      $accessRule.InheritanceFlags -ne $expectedInheritance -or
+      $accessRule.PropagationFlags -ne
+        [System.Security.AccessControl.PropagationFlags]::None -or
+      $accessRule.IsInherited) {
+    throw "Quarantine ACL is not exact current-user FullControl: $Path"
+  }
+}
+
+function Open-LockedDirectoryChain {
+  param(
+    [Parameter(Mandatory=$true)][string]$Root,
+    [string[]]$RelativeComponents = @()
+  )
+
+  $handles = [System.Collections.Generic.List[EasyRewind.NativeDirectoryHandle]]::new()
+  try {
+    $current = Get-CanonicalPath -Path $Root
+    $handles.Add([EasyRewind.NativeDirectoryHandle]::OpenExisting($current))
+    foreach ($component in $RelativeComponents) {
+      $current = Get-CanonicalPath -Path (Join-Path $current $component)
+      $handles.Add([EasyRewind.NativeDirectoryHandle]::OpenExisting($current))
+    }
+    return $handles
+  } catch {
+    foreach ($handle in $handles) {
+      $handle.Dispose()
+    }
+    throw
+  }
+}
+
+function Close-HandleCollection {
+  param([AllowNull()]$Handles)
+
+  if ($null -eq $Handles) {
+    return
+  }
+  foreach ($handle in $Handles) {
+    if ($null -ne $handle) {
+      $handle.Dispose()
     }
   }
-  if (-not $hasExclusiveFullControl) {
-    throw "Quarantine ACL does not grant exclusive inherited FullControl: $Path"
+}
+
+function Remove-TrackedQuarantineArtifacts {
+  param(
+    [Parameter(Mandatory=$true)][string]$Destination,
+    [Parameter(Mandatory=$true)][string]$ExpectedRoot,
+    [Parameter(Mandatory=$true)][string]$ExpectedTimestamp,
+    [string[]]$CreatedBackupPaths = @(),
+    [string]$ManifestPath,
+    [bool]$ManifestCreated
+  )
+
+  $cleanupTarget = Get-CanonicalPath -Path $Destination
+  $cleanupParent = [System.IO.Directory]::GetParent($cleanupTarget).FullName
+  if (-not (Test-PathEqual -Left $cleanupTarget -Right $Destination) -or
+      -not (Test-PathEqual -Left $cleanupParent -Right $ExpectedRoot) -or
+      [System.IO.Path]::GetFileName($cleanupTarget) -cne $ExpectedTimestamp) {
+    throw 'Refusing to clean up an unexpected quarantine path.'
+  }
+  foreach ($backupPath in $CreatedBackupPaths) {
+    $resolvedBackup = Get-CanonicalPath -Path $backupPath
+    if (-not (Test-PathEqual `
+        -Left ([System.IO.Directory]::GetParent($resolvedBackup).FullName) `
+        -Right $cleanupTarget)) {
+      throw 'Refusing to clean up an unexpected backup path.'
+    }
+    if (Test-Path -LiteralPath $resolvedBackup -PathType Leaf) {
+      Remove-Item -LiteralPath $resolvedBackup -Force
+    }
+  }
+  if ($ManifestCreated -and -not [string]::IsNullOrWhiteSpace($ManifestPath)) {
+    $resolvedManifest = Get-CanonicalPath -Path $ManifestPath
+    if (-not (Test-PathEqual `
+        -Left ([System.IO.Directory]::GetParent($resolvedManifest).FullName) `
+        -Right $cleanupTarget) -or
+        [System.IO.Path]::GetFileName($resolvedManifest) -cne 'manifest.json') {
+      throw 'Refusing to clean up an unexpected manifest path.'
+    }
+    if (Test-Path -LiteralPath $resolvedManifest -PathType Leaf) {
+      Remove-Item -LiteralPath $resolvedManifest -Force
+    }
+  }
+  if (Test-Path -LiteralPath $cleanupTarget) {
+    Remove-Item -LiteralPath $cleanupTarget -Force
+  }
+}
+
+function Assert-StableSnapshot {
+  param(
+    [Parameter(Mandatory=$true)]
+    [EasyRewind.NativeFileSnapshot]$Expected,
+    [Parameter(Mandatory=$true)]
+    [EasyRewind.NativeFileSnapshot]$Actual,
+    [Parameter(Mandatory=$true)][string]$Label
+  )
+
+  if (-not $Expected.HasSameIdentity($Actual) -or
+      $Expected.Size -ne $Actual.Size -or
+      $Expected.Sha256 -cne $Actual.Sha256 -or
+      $Expected.LinkCount -ne 1 -or
+      $Actual.LinkCount -ne 1) {
+    throw "Stable file validation failed for $Label."
   }
 }
 
@@ -538,39 +668,88 @@ foreach ($name in $requiredNames) {
   }
 }
 
+$sourceDirectoryHandles = $null
+$quarantineRootHandles = $null
+$destinationHandle = $null
+$sourceHandles = [System.Collections.Generic.List[EasyRewind.NativeHandleFile]]::new()
+$backupHandles = [System.Collections.Generic.List[EasyRewind.NativeHandleFile]]::new()
+$manifestHandle = $null
+$sourceInitial = @{}
+$backupInitial = @{}
+$createdBackupPaths = @()
+$manifestPath = Get-CanonicalPath -Path (Join-Path $destination 'manifest.json')
+$manifestCreated = $false
 $destinationCreated = $false
+$manifestJson = $null
+$failure = $null
+
 try {
-  $null = [System.IO.Directory]::CreateDirectory($resolvedQuarantineRoot)
-  $null = New-Item -ItemType Directory -Path $destination
+  # Process metadata is supplemental. These raw handles are the authoritative
+  # gate for relative launches, startup-before-listen, and custom ports.
+  $sourceDirectoryHandles = Open-LockedDirectoryChain `
+    -Root $resolvedSourceRoot `
+    -RelativeComponents @('backend', 'data')
+  foreach ($sourceFile in $sourceFiles) {
+    try {
+      $sourceHandle = [EasyRewind.NativeHandleFile]::OpenQuarantineSource(
+        $sourceFile.Path
+      )
+    } catch {
+      if ($_.Exception.Message -match 'source set is in use') {
+        throw "Source set is in use: $($sourceFile.Path)"
+      }
+      throw
+    }
+    $sourceHandles.Add($sourceHandle)
+    $sourceInitial[$sourceFile.Name] = $sourceHandle.Snapshot()
+  }
+
+  if (Test-Path -LiteralPath $resolvedQuarantineRoot) {
+    if (-not (Test-Path -LiteralPath $resolvedQuarantineRoot -PathType Container)) {
+      throw "QuarantineRoot is not a directory: $resolvedQuarantineRoot"
+    }
+  } else {
+    $null = [System.IO.Directory]::CreateDirectory($resolvedQuarantineRoot)
+  }
+  $quarantineRootHandles = Open-LockedDirectoryChain -Root $resolvedQuarantineRoot
+  $destinationHandle = [EasyRewind.NativeDirectoryHandle]::CreateNew($destination)
   $destinationCreated = $true
-  Set-AndVerifyPrivateDirectoryAcl -Path $destination
+  Set-AndVerifyPrivateDirectoryAcl `
+    -Path $destination `
+    -NativeHandle $destinationHandle
 
   $manifestEntries = @()
-  foreach ($sourceFile in $sourceFiles) {
+  for ($index = 0; $index -lt $sourceFiles.Count; $index++) {
+    $sourceFile = $sourceFiles[$index]
+    $sourceHandle = $sourceHandles[$index]
     $backupPath = Get-CanonicalPath -Path (
       Join-Path $destination $sourceFile.Name
     )
-    $initialSource = Get-OrdinaryFileState -Path $sourceFile.Path
-    Copy-Item -LiteralPath $sourceFile.Path -Destination $backupPath
-    $finalSource = Get-OrdinaryFileState -Path $sourceFile.Path
-    $backup = Get-OrdinaryFileState -Path $backupPath
-    if ($initialSource.Size -ne $finalSource.Size -or
-        $initialSource.Hash -cne $finalSource.Hash -or
-        $initialSource.Size -ne $backup.Size -or
-        $initialSource.Hash -cne $backup.Hash) {
-      throw "Legacy source changed during quarantine copy: $($sourceFile.Path)"
+    $backupHandle = [EasyRewind.NativeHandleOperations]::CopyToCreateNew(
+      $sourceHandle,
+      $backupPath
+    )
+    $backupHandles.Add($backupHandle)
+    $createdBackupPaths += $backupPath
+    Set-AndVerifyPrivateFileAcl `
+      -Path $backupPath `
+      -NativeHandle $backupHandle
+    $backupSnapshot = $backupHandle.Snapshot()
+    $backupInitial[$sourceFile.Name] = $backupSnapshot
+    $sourceSnapshot = $sourceInitial[$sourceFile.Name]
+    if ($sourceSnapshot.Size -ne $backupSnapshot.Size -or
+        $sourceSnapshot.Sha256 -cne $backupSnapshot.Sha256) {
+      throw "Backup copy does not match held source: $($sourceFile.Path)"
     }
-
     $manifestEntries += [ordered]@{
       name = $sourceFile.Name
       originalPath = $sourceFile.Path
       backupRelativePath = $sourceFile.Name
-      size = [long]$backup.Size
-      sha256 = $backup.Hash
+      size = [long]$sourceSnapshot.Size
+      sha256 = $sourceSnapshot.Sha256
     }
   }
 
-  $manifestPath = Get-CanonicalPath -Path (Join-Path $destination 'manifest.json')
   $manifest = [ordered]@{
     schemaVersion = 1
     sensitive = $true
@@ -587,31 +766,74 @@ try {
   }
   $manifestJson = $manifest | ConvertTo-Json -Depth 6 -Compress
   $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
-  [System.IO.File]::WriteAllText(
-    $manifestPath,
-    $manifestJson + [System.Environment]::NewLine,
-    $utf8WithoutBom
+  $manifestHandle = [EasyRewind.NativeHandleFile]::CreateNew($manifestPath)
+  $manifestCreated = $true
+  $manifestHandle.WriteAllBytes(
+    $utf8WithoutBom.GetBytes($manifestJson + [System.Environment]::NewLine)
   )
+  Set-AndVerifyPrivateFileAcl `
+    -Path $manifestPath `
+    -NativeHandle $manifestHandle
 
-  Set-AndVerifyPrivateDirectoryAcl -Path $destination
-  Write-Output $manifestJson
+  Set-AndVerifyPrivateDirectoryAcl `
+    -Path $destination `
+    -NativeHandle $destinationHandle
+  for ($index = 0; $index -lt $createdBackupPaths.Count; $index++) {
+    Set-AndVerifyPrivateFileAcl `
+      -Path $createdBackupPaths[$index] `
+      -NativeHandle $backupHandles[$index]
+  }
+  Set-AndVerifyPrivateFileAcl `
+    -Path $manifestPath `
+    -NativeHandle $manifestHandle
+
+  for ($index = 0; $index -lt $sourceFiles.Count; $index++) {
+    $sourceFile = $sourceFiles[$index]
+    $sourceFinal = $sourceHandles[$index].Snapshot()
+    Assert-StableSnapshot `
+      -Expected $sourceInitial[$sourceFile.Name] `
+      -Actual $sourceFinal `
+      -Label $sourceFile.Path
+    $backupFinal = $backupHandles[$index].Snapshot()
+    Assert-StableSnapshot `
+      -Expected $backupInitial[$sourceFile.Name] `
+      -Actual $backupFinal `
+      -Label (Join-Path $destination $sourceFile.Name)
+    if ($sourceFinal.Size -ne $backupFinal.Size -or
+        $sourceFinal.Sha256 -cne $backupFinal.Sha256) {
+      throw "Complete-set backup validation failed: $($sourceFile.Name)"
+    }
+  }
 } catch {
   $failure = $_
+} finally {
+  if ($null -ne $manifestHandle) {
+    $manifestHandle.Dispose()
+  }
+  Close-HandleCollection -Handles $backupHandles
+  Close-HandleCollection -Handles $sourceHandles
+  if ($null -ne $destinationHandle) {
+    $destinationHandle.Dispose()
+  }
+  Close-HandleCollection -Handles $quarantineRootHandles
+  Close-HandleCollection -Handles $sourceDirectoryHandles
+}
+
+if ($null -ne $failure) {
   if ($destinationCreated) {
     try {
-      $cleanupTarget = Get-CanonicalPath -Path $destination
-      $cleanupParent = [System.IO.Directory]::GetParent($cleanupTarget).FullName
-      if (-not (Test-PathEqual -Left $cleanupTarget -Right $destination) -or
-          -not (Test-PathEqual -Left $cleanupParent -Right $resolvedQuarantineRoot) -or
-          [System.IO.Path]::GetFileName($cleanupTarget) -cne $Timestamp) {
-        throw 'Refusing to clean up an unexpected quarantine path.'
-      }
-      if (Test-Path -LiteralPath $cleanupTarget) {
-        Remove-Item -LiteralPath $cleanupTarget -Recurse -Force
-      }
+      Remove-TrackedQuarantineArtifacts `
+        -Destination $destination `
+        -ExpectedRoot $resolvedQuarantineRoot `
+        -ExpectedTimestamp $Timestamp `
+        -CreatedBackupPaths $createdBackupPaths `
+        -ManifestPath $manifestPath `
+        -ManifestCreated $manifestCreated
     } catch {
-      throw "Quarantine failed and its exact destination could not be removed: $($_.Exception.Message)"
+      throw "Quarantine failed and exact non-recursive cleanup also failed: $($_.Exception.Message)"
     }
   }
   throw $failure
 }
+
+Write-Output $manifestJson

@@ -3,6 +3,7 @@ param([Parameter(Mandatory=$true)][string]$ManifestPath)
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'legacy-handle-safety.ps1')
 
 $requiredNames = @(
   'easy-rewind.db',
@@ -10,7 +11,10 @@ $requiredNames = @(
   'easy-rewind.db-shm',
   'settings.json'
 )
-$pathComparison = if ([System.Environment]::OSVersion.Platform -eq [System.PlatformID]::Win32NT) {
+$sensitivityWarning =
+  'Contains sensitive personal legacy data and is not secure credential storage.'
+$pathComparison = if ([System.Environment]::OSVersion.Platform -eq
+    [System.PlatformID]::Win32NT) {
   [System.StringComparison]::OrdinalIgnoreCase
 } else {
   [System.StringComparison]::Ordinal
@@ -18,7 +22,6 @@ $pathComparison = if ([System.Environment]::OSVersion.Platform -eq [System.Platf
 
 function Get-CanonicalPath {
   param([Parameter(Mandatory=$true)][string]$Path)
-
   return [System.IO.Path]::GetFullPath($Path)
 }
 
@@ -27,7 +30,6 @@ function Test-PathEqual {
     [Parameter(Mandatory=$true)][string]$Left,
     [Parameter(Mandatory=$true)][string]$Right
   )
-
   return [string]::Equals($Left, $Right, $pathComparison)
 }
 
@@ -36,7 +38,6 @@ function Assert-StringProperty {
     [Parameter(Mandatory=$true)][psobject]$Object,
     [Parameter(Mandatory=$true)][string]$Name
   )
-
   $property = $Object.PSObject.Properties[$Name]
   if ($null -eq $property -or
       -not ($property.Value -is [string]) -or
@@ -50,7 +51,6 @@ function Assert-ManifestInteger {
     [Parameter(Mandatory=$true)]$Value,
     [Parameter(Mandatory=$true)][string]$Label
   )
-
   if (-not (
       $Value -is [byte] -or
       $Value -is [sbyte] -or
@@ -65,225 +65,367 @@ function Assert-ManifestInteger {
   }
 }
 
-function Get-VerifiedOrdinaryFile {
+function Open-LockedDirectoryChain {
   param(
-    [Parameter(Mandatory=$true)][string]$Path,
-    [ValidateSet('Manifest', 'Source', 'Backup')][string]$Kind = 'Manifest'
+    [Parameter(Mandatory=$true)][string]$Root,
+    [string[]]$RelativeComponents = @()
   )
-
-  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
-    if ($Kind -eq 'Source') {
-      throw "Source changed since quarantine: $Path"
+  $handles = [System.Collections.Generic.List[EasyRewind.NativeDirectoryHandle]]::new()
+  try {
+    $current = Get-CanonicalPath -Path $Root
+    $handles.Add([EasyRewind.NativeDirectoryHandle]::OpenExisting($current))
+    foreach ($component in $RelativeComponents) {
+      $current = Get-CanonicalPath -Path (Join-Path $current $component)
+      $handles.Add([EasyRewind.NativeDirectoryHandle]::OpenExisting($current))
     }
-    if ($Kind -eq 'Backup') {
-      throw "Backup checksum mismatch: $Path"
+    return $handles
+  } catch {
+    foreach ($handle in $handles) {
+      $handle.Dispose()
     }
-    throw "Required verified file is missing: $Path"
+    throw
   }
-  $item = Get-Item -LiteralPath $Path -Force
-  if (-not ($item -is [System.IO.FileInfo]) -or
-      (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0)) {
-    if ($Kind -eq 'Source') {
-      throw "Source changed since quarantine: $Path"
-    }
-    if ($Kind -eq 'Backup') {
-      throw "Backup checksum mismatch: $Path"
-    }
-    throw "Required verified path is not an ordinary file: $Path"
-  }
-  return $item
 }
 
-$manifestItem = Get-VerifiedOrdinaryFile -Path $ManifestPath
-$resolvedManifestPath = Get-CanonicalPath -Path $manifestItem.FullName
+function Close-HandleCollection {
+  param([AllowNull()]$Handles)
+  if ($null -eq $Handles) {
+    return
+  }
+  foreach ($handle in $Handles) {
+    if ($null -ne $handle) {
+      $handle.Dispose()
+    }
+  }
+}
+
+function Assert-SnapshotMatchesManifest {
+  param(
+    [Parameter(Mandatory=$true)]
+    [EasyRewind.NativeFileSnapshot]$Snapshot,
+    [Parameter(Mandatory=$true)][long]$ExpectedSize,
+    [Parameter(Mandatory=$true)][string]$ExpectedHash,
+    [Parameter(Mandatory=$true)][ValidateSet('Source', 'Backup')]
+    [string]$Kind,
+    [Parameter(Mandatory=$true)][string]$Path
+  )
+  if ($Snapshot.LinkCount -ne 1 -or
+      $Snapshot.Size -ne $ExpectedSize -or
+      $Snapshot.Sha256 -cne $ExpectedHash) {
+    if ($Kind -eq 'Source') {
+      throw "Source changed since quarantine: $Path"
+    }
+    throw "Backup checksum mismatch: $Path"
+  }
+}
+
+if (-not (Test-Path -LiteralPath $ManifestPath -PathType Leaf)) {
+  throw "Required verified file is missing: $ManifestPath"
+}
+$resolvedManifestPath = Get-CanonicalPath -Path (
+  (Get-Item -LiteralPath $ManifestPath -Force).FullName
+)
+$manifestHandle = $null
+$sourceDirectoryHandles = $null
+$quarantineDirectoryHandles = $null
+$sourceHandles = [System.Collections.Generic.List[EasyRewind.NativeHandleFile]]::new()
+$backupHandles = [System.Collections.Generic.List[EasyRewind.NativeHandleFile]]::new()
+$failure = $null
+$resultJson = $null
 
 try {
-  $manifest = Get-Content -LiteralPath $resolvedManifestPath -Raw -Encoding UTF8 |
-    ConvertFrom-Json
-} catch {
-  throw "Manifest is not valid JSON: $resolvedManifestPath"
-}
-if ($null -eq $manifest -or -not ($manifest -is [psobject])) {
-  throw 'Manifest must be a JSON object.'
-}
-
-$schemaProperty = $manifest.PSObject.Properties['schemaVersion']
-if ($null -eq $schemaProperty) {
-  throw 'Manifest schemaVersion must be integer 1.'
-}
-Assert-ManifestInteger -Value $schemaProperty.Value -Label 'schemaVersion'
-if ([long]$schemaProperty.Value -ne 1) {
-  throw 'Manifest schemaVersion must be integer 1.'
-}
-
-$sensitiveProperty = $manifest.PSObject.Properties['sensitive']
-if ($null -eq $sensitiveProperty -or
-    -not ($sensitiveProperty.Value -is [bool]) -or
-    $sensitiveProperty.Value -ne $true) {
-  throw 'Manifest sensitive must be true.'
-}
-$sqliteProperty = $manifest.PSObject.Properties['sqliteOpened']
-if ($null -eq $sqliteProperty -or
-    -not ($sqliteProperty.Value -is [bool]) -or
-    $sqliteProperty.Value -ne $false) {
-  throw 'Manifest sqliteOpened must be false.'
-}
-
-Assert-StringProperty -Object $manifest -Name 'sourceRoot'
-Assert-StringProperty -Object $manifest -Name 'quarantinePath'
-Assert-StringProperty -Object $manifest -Name 'manifestPath'
-
-$filesProperty = $manifest.PSObject.Properties['files']
-if ($null -eq $filesProperty) {
-  throw 'Manifest files must contain exactly four entries.'
-}
-$entries = @($filesProperty.Value)
-if ($entries.Count -ne 4) {
-  throw 'Manifest files must contain exactly four entries.'
-}
-
-$declaredSourceRoot = [string]$manifest.sourceRoot
-$canonicalSourceRoot = Get-CanonicalPath -Path $declaredSourceRoot
-if (-not (Test-PathEqual -Left $declaredSourceRoot -Right $canonicalSourceRoot)) {
-  throw 'Manifest sourceRoot is not canonical.'
-}
-
-$declaredQuarantinePath = [string]$manifest.quarantinePath
-$quarantineItem = Get-Item -LiteralPath $declaredQuarantinePath -Force
-if (-not ($quarantineItem -is [System.IO.DirectoryInfo])) {
-  throw 'Manifest quarantinePath is not an existing directory.'
-}
-$resolvedQuarantinePath = Get-CanonicalPath -Path $quarantineItem.FullName
-if (-not (Test-PathEqual -Left $declaredQuarantinePath -Right $resolvedQuarantinePath)) {
-  throw 'Manifest quarantinePath is not canonical.'
-}
-
-$declaredManifestPath = [string]$manifest.manifestPath
-$canonicalDeclaredManifestPath = Get-CanonicalPath -Path $declaredManifestPath
-if (-not (Test-PathEqual -Left $declaredManifestPath -Right $canonicalDeclaredManifestPath) -or
-    -not (Test-PathEqual -Left $resolvedManifestPath -Right $canonicalDeclaredManifestPath)) {
-  throw 'Supplied manifest does not match its declared manifestPath.'
-}
-$manifestParent = [System.IO.Directory]::GetParent($resolvedManifestPath)
-if ($null -eq $manifestParent -or
-    -not (Test-PathEqual -Left $manifestParent.FullName -Right $resolvedQuarantinePath) -or
-    [System.IO.Path]::GetFileName($resolvedManifestPath) -cne 'manifest.json') {
-  throw 'Manifest must be a direct manifest.json file in the declared quarantine directory.'
-}
-
-$entriesByName = @{}
-foreach ($entry in $entries) {
-  if ($null -eq $entry -or -not ($entry -is [psobject])) {
-    throw 'Every manifest file entry must be an object.'
-  }
-  Assert-StringProperty -Object $entry -Name 'name'
-  Assert-StringProperty -Object $entry -Name 'originalPath'
-  Assert-StringProperty -Object $entry -Name 'backupRelativePath'
-  Assert-StringProperty -Object $entry -Name 'sha256'
-
-  $name = [string]$entry.name
-  if ($requiredNames -cnotcontains $name) {
-    throw "Manifest contains an unexpected file entry: $name"
-  }
-  if ($entriesByName.ContainsKey($name)) {
-    throw "Manifest contains a duplicate file entry: $name"
-  }
-  $entriesByName.Add($name, $entry)
-}
-foreach ($requiredName in $requiredNames) {
-  if (-not $entriesByName.ContainsKey($requiredName)) {
-    throw "Manifest is missing required file entry: $requiredName"
-  }
-}
-
-$validatedFiles = @()
-foreach ($name in $requiredNames) {
-  $entry = $entriesByName[$name]
-  if ([string]$entry.backupRelativePath -cne $name -or
-      [System.IO.Path]::IsPathRooted([string]$entry.backupRelativePath)) {
-    throw "Manifest backupRelativePath must equal its exact file name: $name"
-  }
-
-  $expectedOriginalPath = Get-CanonicalPath -Path (
-    Join-Path (Join-Path (Join-Path $canonicalSourceRoot 'backend') 'data') $name
+  $manifestHandle = [EasyRewind.NativeHandleFile]::OpenBackupRead(
+    $resolvedManifestPath
   )
-  $declaredOriginalPath = [string]$entry.originalPath
-  if (-not (Test-PathEqual -Left $declaredOriginalPath -Right $expectedOriginalPath) -or
-      -not (Test-PathEqual -Left $declaredOriginalPath `
-        -Right (Get-CanonicalPath -Path $declaredOriginalPath))) {
-    throw "Manifest originalPath is not the exact source path for: $name"
+  $manifestBytes = $manifestHandle.ReadAllBytes()
+  if ($manifestBytes.Length -ge 3 -and
+      $manifestBytes[0] -eq 0xEF -and
+      $manifestBytes[1] -eq 0xBB -and
+      $manifestBytes[2] -eq 0xBF) {
+    throw 'Manifest must be UTF-8 without BOM.'
+  }
+  try {
+    $strictUtf8 = New-Object System.Text.UTF8Encoding($false, $true)
+    $manifestText = $strictUtf8.GetString($manifestBytes)
+    $manifest = $manifestText | ConvertFrom-Json
+  } catch {
+    throw "Manifest is not valid BOM-free UTF-8 JSON: $resolvedManifestPath"
+  }
+  if ($null -eq $manifest -or -not ($manifest -is [psobject])) {
+    throw 'Manifest must be a JSON object.'
   }
 
-  $expectedBackupPath = Get-CanonicalPath -Path (
-    Join-Path $resolvedQuarantinePath $name
+  $schemaProperty = $manifest.PSObject.Properties['schemaVersion']
+  if ($null -eq $schemaProperty) {
+    throw 'Manifest schemaVersion must be integer 1.'
+  }
+  Assert-ManifestInteger -Value $schemaProperty.Value -Label 'schemaVersion'
+  if ([long]$schemaProperty.Value -ne 1) {
+    throw 'Manifest schemaVersion must be integer 1.'
+  }
+  $sensitiveProperty = $manifest.PSObject.Properties['sensitive']
+  if ($null -eq $sensitiveProperty -or
+      -not ($sensitiveProperty.Value -is [bool]) -or
+      $sensitiveProperty.Value -ne $true) {
+    throw 'Manifest sensitive must be true.'
+  }
+  $sqliteProperty = $manifest.PSObject.Properties['sqliteOpened']
+  if ($null -eq $sqliteProperty -or
+      -not ($sqliteProperty.Value -is [bool]) -or
+      $sqliteProperty.Value -ne $false) {
+    throw 'Manifest sqliteOpened must be false.'
+  }
+  Assert-StringProperty -Object $manifest -Name 'warning'
+  if ([string]$manifest.warning -cne $sensitivityWarning) {
+    throw 'Manifest warning does not match the required sensitivity warning.'
+  }
+  Assert-StringProperty -Object $manifest -Name 'backupTimeUtc'
+  $backupTime = [DateTimeOffset]::MinValue
+  if ([string]$manifest.backupTimeUtc -cnotmatch 'Z$' -or
+      -not [DateTimeOffset]::TryParse(
+        [string]$manifest.backupTimeUtc,
+        [System.Globalization.CultureInfo]::InvariantCulture,
+        (
+          [System.Globalization.DateTimeStyles]::AssumeUniversal -bor
+          [System.Globalization.DateTimeStyles]::AdjustToUniversal
+        ),
+        [ref]$backupTime
+      ) -or
+      $backupTime.Offset -ne [TimeSpan]::Zero) {
+    throw 'Manifest backupTimeUtc must be parseable UTC ending in Z.'
+  }
+
+  Assert-StringProperty -Object $manifest -Name 'sourceRoot'
+  Assert-StringProperty -Object $manifest -Name 'quarantinePath'
+  Assert-StringProperty -Object $manifest -Name 'manifestPath'
+  $filesProperty = $manifest.PSObject.Properties['files']
+  if ($null -eq $filesProperty) {
+    throw 'Manifest files must contain exactly four entries.'
+  }
+  $entries = @($filesProperty.Value)
+  if ($entries.Count -ne 4) {
+    throw 'Manifest files must contain exactly four entries.'
+  }
+
+  $declaredSourceRoot = [string]$manifest.sourceRoot
+  $canonicalSourceRoot = Get-CanonicalPath -Path $declaredSourceRoot
+  if (-not (Test-PathEqual -Left $declaredSourceRoot -Right $canonicalSourceRoot)) {
+    throw 'Manifest sourceRoot is not canonical.'
+  }
+  $declaredQuarantinePath = [string]$manifest.quarantinePath
+  if (-not (Test-Path -LiteralPath $declaredQuarantinePath -PathType Container)) {
+    throw 'Manifest quarantinePath is not an existing directory.'
+  }
+  $resolvedQuarantinePath = Get-CanonicalPath -Path (
+    (Get-Item -LiteralPath $declaredQuarantinePath -Force).FullName
   )
-  $declaredBackupPath = Get-CanonicalPath -Path (
-    Join-Path $resolvedQuarantinePath ([string]$entry.backupRelativePath)
-  )
-  if (-not (Test-PathEqual -Left $declaredBackupPath -Right $expectedBackupPath) -or
-      -not (Test-PathEqual -Left ([System.IO.Directory]::GetParent($declaredBackupPath).FullName) `
+  if (-not (Test-PathEqual `
+      -Left $declaredQuarantinePath `
+      -Right $resolvedQuarantinePath)) {
+    throw 'Manifest quarantinePath is not canonical.'
+  }
+  $declaredManifestPath = [string]$manifest.manifestPath
+  $canonicalDeclaredManifest = Get-CanonicalPath -Path $declaredManifestPath
+  if (-not (Test-PathEqual `
+      -Left $declaredManifestPath `
+      -Right $canonicalDeclaredManifest) -or
+      -not (Test-PathEqual `
+        -Left $resolvedManifestPath `
+        -Right $canonicalDeclaredManifest)) {
+    throw 'Supplied manifest does not match its declared manifestPath.'
+  }
+  $manifestParent = [System.IO.Directory]::GetParent($resolvedManifestPath)
+  if ($null -eq $manifestParent -or
+      -not (Test-PathEqual `
+        -Left $manifestParent.FullName `
+        -Right $resolvedQuarantinePath) -or
+      [System.IO.Path]::GetFileName($resolvedManifestPath) -cne 'manifest.json') {
+    throw 'Manifest must be direct manifest.json in the quarantine directory.'
+  }
+
+  $entriesByName = @{}
+  foreach ($entry in $entries) {
+    if ($null -eq $entry -or -not ($entry -is [psobject])) {
+      throw 'Every manifest file entry must be an object.'
+    }
+    Assert-StringProperty -Object $entry -Name 'name'
+    Assert-StringProperty -Object $entry -Name 'originalPath'
+    Assert-StringProperty -Object $entry -Name 'backupRelativePath'
+    Assert-StringProperty -Object $entry -Name 'sha256'
+    $name = [string]$entry.name
+    if ($requiredNames -cnotcontains $name) {
+      throw "Manifest contains an unexpected file entry: $name"
+    }
+    if ($entriesByName.ContainsKey($name)) {
+      throw "Manifest contains a duplicate file entry: $name"
+    }
+    $entriesByName.Add($name, $entry)
+  }
+  foreach ($name in $requiredNames) {
+    if (-not $entriesByName.ContainsKey($name)) {
+      throw "Manifest is missing required file entry: $name"
+    }
+  }
+
+  $validatedFiles = @()
+  foreach ($name in $requiredNames) {
+    $entry = $entriesByName[$name]
+    if ([string]$entry.backupRelativePath -cne $name -or
+        [System.IO.Path]::IsPathRooted([string]$entry.backupRelativePath)) {
+      throw "Manifest backupRelativePath must equal its exact file name: $name"
+    }
+    $expectedOriginal = Get-CanonicalPath -Path (
+      Join-Path (Join-Path (Join-Path $canonicalSourceRoot 'backend') 'data') $name
+    )
+    if (-not (Test-PathEqual `
+        -Left ([string]$entry.originalPath) `
+        -Right $expectedOriginal) -or
+        -not (Test-PathEqual `
+          -Left ([string]$entry.originalPath) `
+          -Right (Get-CanonicalPath -Path ([string]$entry.originalPath)))) {
+      throw "Manifest originalPath is not exact for: $name"
+    }
+    $expectedBackup = Get-CanonicalPath -Path (
+      Join-Path $resolvedQuarantinePath $name
+    )
+    if (-not (Test-PathEqual `
+        -Left ([System.IO.Directory]::GetParent($expectedBackup).FullName) `
         -Right $resolvedQuarantinePath)) {
-    throw "Manifest backup path is not the exact quarantine path for: $name"
+      throw "Manifest backup path is not exact for: $name"
+    }
+    $sizeProperty = $entry.PSObject.Properties['size']
+    if ($null -eq $sizeProperty) {
+      throw "Manifest size is missing for: $name"
+    }
+    Assert-ManifestInteger -Value $sizeProperty.Value -Label "$name size"
+    $expectedSize = [long]$sizeProperty.Value
+    if ($expectedSize -lt 0) {
+      throw "Manifest size cannot be negative for: $name"
+    }
+    $expectedHash = [string]$entry.sha256
+    if ($expectedHash -cnotmatch '^[0-9A-F]{64}$') {
+      throw "Manifest SHA-256 must be uppercase hexadecimal for: $name"
+    }
+    $validatedFiles += [pscustomobject]@{
+      Name = $name
+      SourcePath = $expectedOriginal
+      BackupPath = $expectedBackup
+      Size = $expectedSize
+      Hash = $expectedHash
+    }
   }
 
-  $sizeProperty = $entry.PSObject.Properties['size']
-  if ($null -eq $sizeProperty) {
-    throw "Manifest size is missing for: $name"
-  }
-  Assert-ManifestInteger -Value $sizeProperty.Value -Label "$name size"
-  $expectedSize = [long]$sizeProperty.Value
-  if ($expectedSize -lt 0) {
-    throw "Manifest size cannot be negative for: $name"
+  # Supplemental metadata is rerun immediately before the authoritative locks.
+  Invoke-EasyRewindSupplementalProcessVerification `
+    -ResolvedSourceRoot $canonicalSourceRoot
+  $sourceDirectoryHandles = Open-LockedDirectoryChain `
+    -Root $canonicalSourceRoot `
+    -RelativeComponents @('backend', 'data')
+  $quarantineRoot = [System.IO.Directory]::GetParent(
+    $resolvedQuarantinePath
+  ).FullName
+  $quarantineLeaf = [System.IO.Path]::GetFileName($resolvedQuarantinePath)
+  $quarantineDirectoryHandles = Open-LockedDirectoryChain `
+    -Root $quarantineRoot `
+    -RelativeComponents @($quarantineLeaf)
+
+  foreach ($validatedFile in $validatedFiles) {
+    try {
+      $sourceHandle = [EasyRewind.NativeHandleFile]::OpenPurgeSource(
+        $validatedFile.SourcePath
+      )
+    } catch {
+      throw "Source changed or source set is in use: $($validatedFile.SourcePath)"
+    }
+    $sourceHandles.Add($sourceHandle)
+    try {
+      $backupHandle = [EasyRewind.NativeHandleFile]::OpenBackupRead(
+        $validatedFile.BackupPath
+      )
+    } catch {
+      throw "Backup checksum mismatch or backup is in use: $($validatedFile.BackupPath)"
+    }
+    $backupHandles.Add($backupHandle)
   }
 
-  $expectedHash = [string]$entry.sha256
-  if ($expectedHash -cnotmatch '^[0-9A-F]{64}$') {
-    throw "Manifest SHA-256 must be uppercase hexadecimal for: $name"
+  $sourceSnapshots = @()
+  $backupSnapshots = @()
+  for ($index = 0; $index -lt $validatedFiles.Count; $index++) {
+    $validatedFile = $validatedFiles[$index]
+    $sourceSnapshot = $sourceHandles[$index].Snapshot()
+    $backupSnapshot = $backupHandles[$index].Snapshot()
+    Assert-SnapshotMatchesManifest `
+      -Snapshot $sourceSnapshot `
+      -ExpectedSize $validatedFile.Size `
+      -ExpectedHash $validatedFile.Hash `
+      -Kind Source `
+      -Path $validatedFile.SourcePath
+    Assert-SnapshotMatchesManifest `
+      -Snapshot $backupSnapshot `
+      -ExpectedSize $validatedFile.Size `
+      -ExpectedHash $validatedFile.Hash `
+      -Kind Backup `
+      -Path $validatedFile.BackupPath
+    $sourceSnapshots += $sourceSnapshot
+    $backupSnapshots += $backupSnapshot
   }
 
-  $validatedFiles += [pscustomobject]@{
-    Name = $name
-    SourcePath = $expectedOriginalPath
-    BackupPath = $expectedBackupPath
-    Size = $expectedSize
-    Hash = $expectedHash
+  # A second complete-set pass immediately precedes the single destructive gate.
+  for ($index = 0; $index -lt $validatedFiles.Count; $index++) {
+    $sourceAgain = $sourceHandles[$index].Snapshot()
+    $backupAgain = $backupHandles[$index].Snapshot()
+    if (-not $sourceSnapshots[$index].HasSameIdentity($sourceAgain) -or
+        $sourceSnapshots[$index].Sha256 -cne $sourceAgain.Sha256 -or
+        -not $backupSnapshots[$index].HasSameIdentity($backupAgain) -or
+        $backupSnapshots[$index].Sha256 -cne $backupAgain.Sha256) {
+      throw "Held complete-set identity changed: $($validatedFiles[$index].Name)"
+    }
+  }
+
+  $decisionTarget = (
+    'four exact manifest-verified legacy source files under ' +
+    $canonicalSourceRoot
+  )
+  if (-not $PSCmdlet.ShouldProcess(
+      $decisionTarget,
+      'Purge the complete verified legacy source set'
+    )) {
+    $resultJson = ([ordered]@{
+      purged = $false
+      manifestPath = $resolvedManifestPath
+      removed = @()
+    } | ConvertTo-Json -Depth 4 -Compress)
+  } else {
+    [EasyRewind.NativeHandleOperations]::MarkDeletePendingAll(
+      $sourceHandles.ToArray(),
+      -1
+    )
+    Close-HandleCollection -Handles $sourceHandles
+    $sourceHandles.Clear()
+    foreach ($validatedFile in $validatedFiles) {
+      if (Test-Path -LiteralPath $validatedFile.SourcePath) {
+        throw "Delete-by-handle did not remove source: $($validatedFile.SourcePath)"
+      }
+    }
+    $resultJson = ([ordered]@{
+      purged = $true
+      manifestPath = $resolvedManifestPath
+      removed = @($validatedFiles | ForEach-Object { $_.SourcePath })
+    } | ConvertTo-Json -Depth 4 -Compress)
+  }
+} catch {
+  $failure = $_
+} finally {
+  Close-HandleCollection -Handles $sourceHandles
+  Close-HandleCollection -Handles $backupHandles
+  Close-HandleCollection -Handles $quarantineDirectoryHandles
+  Close-HandleCollection -Handles $sourceDirectoryHandles
+  if ($null -ne $manifestHandle) {
+    $manifestHandle.Dispose()
   }
 }
 
-# Complete the full source-and-backup validation pass before removing any source.
-foreach ($validatedFile in $validatedFiles) {
-  $sourceItem = Get-VerifiedOrdinaryFile -Path $validatedFile.SourcePath -Kind Source
-  if ([long]$sourceItem.Length -ne $validatedFile.Size) {
-    throw "Source changed since quarantine: $($validatedFile.SourcePath)"
-  }
-  $sourceHash = (Get-FileHash -LiteralPath $validatedFile.SourcePath -Algorithm SHA256).
-    Hash.ToUpperInvariant()
-  if ($sourceHash -cne $validatedFile.Hash) {
-    throw "Source changed since quarantine: $($validatedFile.SourcePath)"
-  }
-
-  $backupItem = Get-VerifiedOrdinaryFile -Path $validatedFile.BackupPath -Kind Backup
-  if ([long]$backupItem.Length -ne $validatedFile.Size) {
-    throw "Backup checksum mismatch: $($validatedFile.BackupPath)"
-  }
-  $backupHash = (Get-FileHash -LiteralPath $validatedFile.BackupPath -Algorithm SHA256).
-    Hash.ToUpperInvariant()
-  if ($backupHash -cne $validatedFile.Hash) {
-    throw "Backup checksum mismatch: $($validatedFile.BackupPath)"
-  }
+if ($null -ne $failure) {
+  throw $failure
 }
-
-$removedPaths = @()
-foreach ($validatedFile in $validatedFiles) {
-  if ($PSCmdlet.ShouldProcess($validatedFile.SourcePath, 'Purge verified legacy source file')) {
-    Remove-Item -LiteralPath $validatedFile.SourcePath -Force
-    $removedPaths += $validatedFile.SourcePath
-  }
-}
-
-$result = [ordered]@{
-  purged = ($removedPaths.Count -eq 4)
-  manifestPath = $resolvedManifestPath
-  removed = $removedPaths
-}
-Write-Output ($result | ConvertTo-Json -Depth 4 -Compress)
+Write-Output $resultJson

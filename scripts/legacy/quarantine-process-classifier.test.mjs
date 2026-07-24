@@ -1,5 +1,11 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -11,6 +17,12 @@ const quarantineScript = join(
   'scripts',
   'legacy',
   'quarantine-legacy.ps1'
+);
+const handleHelper = join(
+  repositoryRoot,
+  'scripts',
+  'legacy',
+  'legacy-handle-safety.ps1'
 );
 
 test('classifies confirmed candidates separately from metadata verification failures', () => {
@@ -61,6 +73,7 @@ test('classifies confirmed candidates separately from metadata verification fail
       },
     ];
     const driverPath = join(fixtureRoot, 'classifier-driver.ps1');
+    copyFileSync(handleHelper, join(fixtureRoot, 'legacy-handle-safety.ps1'));
     const driverSource = `${scriptSource.slice(0, mainIndex)}
 $syntheticProcesses = @'
 ${JSON.stringify(records)}
