@@ -1,6 +1,12 @@
 # Easy Rewind Requirement-to-Evidence Matrix
 
-Statuses: `not-started`, `failing`, `implemented`, `verified`, `blocked`.
+Statuses:
+
+- `not-started` = no implementation work begun.
+- `failing` = requirement represented by a reproducible failing check/test.
+- `implemented` = code/docs exist but required verification is incomplete.
+- `verified` = required executable/manual evidence passes and recovery is recorded.
+- `blocked` = cannot proceed due to named unresolved dependency/authority/external action.
 
 | ID | Requirement | Stage | Status | Implementation | Test/command | Evidence | Recovery |
 | --- | --- | --- | --- | --- | --- | --- | --- |
