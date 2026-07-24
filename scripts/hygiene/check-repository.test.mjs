@@ -137,6 +137,27 @@ test('filesystem walk does not follow directory symlinks or junctions', (t) => {
   assert.equal(result.status, 0, result.stderr);
 });
 
+test('fails closed when the requested root is a directory link', (t) => {
+  const target = fixture({ 'backend/.env': 'DO_NOT_PRINT_THIS_VALUE' });
+  const parent = fixture();
+  const linkedRoot = join(parent, 'linked-root');
+  try {
+    symlinkSync(target, linkedRoot, 'junction');
+  } catch (error) {
+    t.skip(`directory links are unavailable: ${error.code ?? error.message}`);
+    return;
+  }
+
+  const result = check(linkedRoot, '--filesystem');
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /symbolic|junction|reparse|link/i);
+  assert.doesNotMatch(result.stderr, /backend[\\\/]\.env/);
+  assert.doesNotMatch(
+    `${result.stdout}${result.stderr}`,
+    /DO_NOT_PRINT_THIS_VALUE/,
+  );
+});
+
 test('git mode rejects tracked forbidden files even when ignored', () => {
   const root = fixture({
     '.gitignore': '*.db\n',

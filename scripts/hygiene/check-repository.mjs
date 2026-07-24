@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { basename, join, relative, resolve, sep } from 'node:path';
 import process from 'node:process';
@@ -137,7 +137,11 @@ function inspect(root, filesystemMode) {
   if (!existsSync(root)) {
     throw new Error('Repository root does not exist.');
   }
-  if (!statSync(root).isDirectory()) {
+  const rootMetadata = lstatSync(root);
+  if (rootMetadata.isSymbolicLink()) {
+    throw new Error('Repository root must not be a symbolic or reparse link.');
+  }
+  if (!rootMetadata.isDirectory()) {
     throw new Error('Repository root is not a directory.');
   }
   return filesystemMode || !existsSync(join(root, '.git'))
