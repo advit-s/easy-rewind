@@ -20,32 +20,11 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 const repositoryRoot = resolve(import.meta.dirname, '..', '..');
-const repositoryQuarantineScript = join(
-  repositoryRoot,
-  'scripts',
-  'legacy',
-  'quarantine-legacy.ps1'
-);
-const repositoryPurgeScript = join(
-  repositoryRoot,
-  'scripts',
-  'legacy',
-  'purge-legacy-source.ps1'
-);
-const repositoryHandleHelper = join(
-  repositoryRoot,
-  'scripts',
-  'legacy',
-  'legacy-handle-safety.ps1'
-);
-const requiredNames = [
-  'easy-rewind.db',
-  'easy-rewind.db-wal',
-  'easy-rewind.db-shm',
-  'settings.json',
-];
-const sensitivityWarning =
-  'Contains sensitive personal legacy data and is not secure credential storage.';
+const repositoryQuarantineScript = join(repositoryRoot, 'scripts', 'legacy', 'quarantine-legacy.ps1');
+const repositoryPurgeScript = join(repositoryRoot, 'scripts', 'legacy', 'purge-legacy-source.ps1');
+const repositoryHandleHelper = join(repositoryRoot, 'scripts', 'legacy', 'legacy-handle-safety.ps1');
+const requiredNames = ['easy-rewind.db', 'easy-rewind.db-wal', 'easy-rewind.db-shm', 'settings.json'];
+const sensitivityWarning = 'Contains sensitive personal legacy data and is not secure credential storage.';
 const tempRoots = [];
 
 function sha256(bytes) {
@@ -78,11 +57,7 @@ function assertPathWithin(path, root, label) {
 
 function assertManifestContainment(fixture, manifest) {
   assertPathWithin(manifest.sourceRoot, fixture.root, 'sourceRoot');
-  assert.equal(
-    resolve(manifest.sourceRoot),
-    resolve(fixture.sourceRoot),
-    'sourceRoot must be the fixture source root'
-  );
+  assert.equal(resolve(manifest.sourceRoot), resolve(fixture.sourceRoot), 'sourceRoot must be the fixture source root');
   assertPathWithin(manifest.manifestPath, fixture.root, 'manifestPath');
   assertPathWithin(manifest.quarantinePath, fixture.root, 'quarantinePath');
   assertPathWithin(manifest.manifestPath, fixture.quarantineRoot, 'manifestPath');
@@ -102,11 +77,7 @@ function assertManifestContainment(fixture, manifest) {
     );
     const backupPath = resolve(manifest.quarantinePath, entry.backupRelativePath);
     assertPathWithin(backupPath, fixture.root, `${entry.name} backupRelativePath`);
-    assertPathWithin(
-      backupPath,
-      fixture.quarantineRoot,
-      `${entry.name} backupRelativePath`
-    );
+    assertPathWithin(backupPath, fixture.quarantineRoot, `${entry.name} backupRelativePath`);
   }
 }
 
@@ -150,10 +121,7 @@ function fixtureLocalScript(fixture, repositoryScript) {
     copyFileSync(repositoryScript, localScript);
   }
   if (existsSync(repositoryHandleHelper)) {
-    copyFileSync(
-      repositoryHandleHelper,
-      join(fixture.toolingRoot, basename(repositoryHandleHelper))
-    );
+    copyFileSync(repositoryHandleHelper, join(fixture.toolingRoot, basename(repositoryHandleHelper)));
   }
   return localScript;
 }
@@ -172,16 +140,14 @@ function validatePowerShellResult(result) {
 }
 
 function spawnPowerShell(fixture, args) {
-  return validatePowerShellResult(spawnSync(
-    'powershell.exe',
-    args,
-    {
+  return validatePowerShellResult(
+    spawnSync('powershell.exe', args, {
       cwd: fixture.root,
       encoding: 'utf8',
       env: { ...process.env, LOCALAPPDATA: fixture.localAppData },
       timeout: 10_000,
-    }
-  ));
+    })
+  );
 }
 
 function runPowerShell(fixture, repositoryScript, args) {
@@ -215,12 +181,7 @@ function quotePowerShellLiteral(value) {
   return `'${value.replaceAll("'", "''")}'`;
 }
 
-function runPurgePowerShell(
-  fixture,
-  repositoryScript,
-  manifestPath,
-  extraArguments = ['-Confirm:$false']
-) {
+function runPurgePowerShell(fixture, repositoryScript, manifestPath, extraArguments = ['-Confirm:$false']) {
   const script = fixtureLocalScript(fixture, repositoryScript);
   const command = [
     '&',
@@ -275,7 +236,7 @@ function createManifestFixture(fixture, timestamp) {
   const manifestPath = join(quarantinePath, 'manifest.json');
   mkdirSync(quarantinePath, { recursive: true });
 
-  const files = requiredNames.map((name) => {
+  const files = requiredNames.map(name => {
     const bytes = fixture.files.get(name);
     const backupRelativePath = name;
     writeFileSync(join(quarantinePath, backupRelativePath), bytes);
@@ -340,10 +301,7 @@ test('quarantine copies the coherent set byte-for-byte and writes a safe manifes
   assert.equal(output.sqliteOpened, false);
   assert.match(output.backupTimeUtc, /Z$/);
   assert.equal(basename(output.quarantinePath), '20260724T120000000Z');
-  assert.deepEqual(
-    output.files.map((entry) => entry.name).sort(),
-    [...fixture.files.keys()].sort()
-  );
+  assert.deepEqual(output.files.map(entry => entry.name).sort(), [...fixture.files.keys()].sort());
 
   for (const entry of output.files) {
     const original = fixture.files.get(entry.name);
@@ -352,10 +310,7 @@ test('quarantine copies the coherent set byte-for-byte and writes a safe manifes
     assert.equal(entry.size, original.byteLength);
     assert.match(entry.sha256, /^[0-9A-F]{64}$/);
     assert.equal(entry.sha256, sha256(original));
-    assert.deepEqual(
-      readFileSync(resolve(output.quarantinePath, entry.backupRelativePath)),
-      original
-    );
+    assert.deepEqual(readFileSync(resolve(output.quarantinePath, entry.backupRelativePath)), original);
   }
   assert.equal(existsSync(output.manifestPath), true);
   for (const [name, bytes] of fixture.files) {
@@ -365,9 +320,7 @@ test('quarantine copies the coherent set byte-for-byte and writes a safe manifes
 
   const aclPaths = [
     output.quarantinePath,
-    ...output.files.map((entry) =>
-      resolve(output.quarantinePath, entry.backupRelativePath)
-    ),
+    ...output.files.map(entry => resolve(output.quarantinePath, entry.backupRelativePath)),
     output.manifestPath,
   ];
   const aclRecords = inspectAcls(fixture, aclPaths);
@@ -431,10 +384,7 @@ test('quarantine defaults to fixture-local LOCALAPPDATA when QuarantineRoot is o
   assert.equal(result.status, 0, diagnostic(result));
   const output = JSON.parse(result.stdout);
   assertManifestContainment(fixture, output);
-  assert.equal(
-    resolve(output.quarantinePath),
-    resolve(fixture.quarantineRoot, '20260724T120000099Z')
-  );
+  assert.equal(resolve(output.quarantinePath), resolve(fixture.quarantineRoot, '20260724T120000099Z'));
   assert.equal(existsSync(output.manifestPath), true);
 });
 
@@ -452,27 +402,20 @@ test('quarantine normalizes relative dot and forward-separator public paths', ()
   assert.equal(result.status, 0, diagnostic(result));
   const output = JSON.parse(result.stdout);
   assertManifestContainment(fixture, output);
-  assert.equal(
-    resolve(output.quarantinePath),
-    resolve(fixture.quarantineRoot, '20260724T120000027Z')
-  );
+  assert.equal(resolve(output.quarantinePath), resolve(fixture.quarantineRoot, '20260724T120000027Z'));
 });
 
 test('public path normalization still rejects device UNC and ADS forms', () => {
   const deviceSourceFixture = newFixture();
   const deviceSource = `\\\\?\\${deviceSourceFixture.sourceRoot}`;
-  const sourceResult = runPowerShell(
-    deviceSourceFixture,
-    repositoryQuarantineScript,
-    [
-      '-SourceRoot',
-      deviceSource,
-      '-QuarantineRoot',
-      deviceSourceFixture.quarantineRoot,
-      '-Timestamp',
-      '20260724T120000028Z',
-    ]
-  );
+  const sourceResult = runPowerShell(deviceSourceFixture, repositoryQuarantineScript, [
+    '-SourceRoot',
+    deviceSource,
+    '-QuarantineRoot',
+    deviceSourceFixture.quarantineRoot,
+    '-Timestamp',
+    '20260724T120000028Z',
+  ]);
   assert.notEqual(sourceResult.status, 0, diagnostic(sourceResult));
   assert.match(sourceResult.stderr, /canonical|fixed-drive|local-drive|path/i);
 
@@ -525,75 +468,46 @@ test('quarantine fails closed while any source writer handle is open', () => {
 
 test('quarantine rejects reparse components and multiply linked source files', () => {
   const backendJunctionFixture = newFixture();
-  const realBackendRoot = join(
+  const realBackendRoot = join(backendJunctionFixture.sourceRoot, 'real-backend');
+  renameSync(join(backendJunctionFixture.sourceRoot, 'backend'), realBackendRoot);
+  symlinkSync(realBackendRoot, join(backendJunctionFixture.sourceRoot, 'backend'), 'junction');
+  const backendJunctionResult = runPowerShell(backendJunctionFixture, repositoryQuarantineScript, [
+    '-SourceRoot',
     backendJunctionFixture.sourceRoot,
-    'real-backend'
-  );
-  renameSync(
-    join(backendJunctionFixture.sourceRoot, 'backend'),
-    realBackendRoot
-  );
-  symlinkSync(
-    realBackendRoot,
-    join(backendJunctionFixture.sourceRoot, 'backend'),
-    'junction'
-  );
-  const backendJunctionResult = runPowerShell(
-    backendJunctionFixture,
-    repositoryQuarantineScript,
-    [
-      '-SourceRoot',
-      backendJunctionFixture.sourceRoot,
-      '-QuarantineRoot',
-      backendJunctionFixture.quarantineRoot,
-      '-Timestamp',
-      '20260724T120000019Z',
-    ]
-  );
+    '-QuarantineRoot',
+    backendJunctionFixture.quarantineRoot,
+    '-Timestamp',
+    '20260724T120000019Z',
+  ]);
   assert.notEqual(backendJunctionResult.status, 0, diagnostic(backendJunctionResult));
-  assert.match(
-    backendJunctionResult.stderr,
-    /reparse|junction/i,
-    diagnostic(backendJunctionResult)
-  );
+  assert.match(backendJunctionResult.stderr, /reparse|junction/i, diagnostic(backendJunctionResult));
 
   const junctionFixture = newFixture();
   const realDataRoot = join(junctionFixture.sourceRoot, 'backend', 'real-data');
   renameSync(junctionFixture.dataRoot, realDataRoot);
   symlinkSync(realDataRoot, junctionFixture.dataRoot, 'junction');
-  const junctionResult = runPowerShell(
-    junctionFixture,
-    repositoryQuarantineScript,
-    [
-      '-SourceRoot',
-      junctionFixture.sourceRoot,
-      '-QuarantineRoot',
-      junctionFixture.quarantineRoot,
-      '-Timestamp',
-      '20260724T120000021Z',
-    ]
-  );
+  const junctionResult = runPowerShell(junctionFixture, repositoryQuarantineScript, [
+    '-SourceRoot',
+    junctionFixture.sourceRoot,
+    '-QuarantineRoot',
+    junctionFixture.quarantineRoot,
+    '-Timestamp',
+    '20260724T120000021Z',
+  ]);
   assert.notEqual(junctionResult.status, 0, diagnostic(junctionResult));
   assert.match(junctionResult.stderr, /reparse|junction/i, diagnostic(junctionResult));
   assert.equal(existsSync(junctionFixture.quarantineRoot), false);
 
   const hardLinkFixture = newFixture();
-  linkSync(
-    join(hardLinkFixture.dataRoot, 'easy-rewind.db'),
-    join(hardLinkFixture.dataRoot, 'easy-rewind.db-alias')
-  );
-  const hardLinkResult = runPowerShell(
-    hardLinkFixture,
-    repositoryQuarantineScript,
-    [
-      '-SourceRoot',
-      hardLinkFixture.sourceRoot,
-      '-QuarantineRoot',
-      hardLinkFixture.quarantineRoot,
-      '-Timestamp',
-      '20260724T120000022Z',
-    ]
-  );
+  linkSync(join(hardLinkFixture.dataRoot, 'easy-rewind.db'), join(hardLinkFixture.dataRoot, 'easy-rewind.db-alias'));
+  const hardLinkResult = runPowerShell(hardLinkFixture, repositoryQuarantineScript, [
+    '-SourceRoot',
+    hardLinkFixture.sourceRoot,
+    '-QuarantineRoot',
+    hardLinkFixture.quarantineRoot,
+    '-Timestamp',
+    '20260724T120000022Z',
+  ]);
   assert.notEqual(hardLinkResult.status, 0, diagnostic(hardLinkResult));
   assert.match(hardLinkResult.stderr, /hard link|multiple links/i, diagnostic(hardLinkResult));
   assert.equal(existsSync(hardLinkFixture.quarantineRoot), false);
@@ -651,17 +565,10 @@ test('quarantine failure cleanup deletes only held invocation-created objects', 
   const timestamp = '20260724T120000023Z';
   const destination = join(fixture.quarantineRoot, timestamp);
   const sentinelPath = join(destination, 'injected-untracked.txt');
-  const localScript = fixtureLocalScript(
-    fixture,
-    repositoryQuarantineScript
-  );
+  const localScript = fixtureLocalScript(fixture, repositoryQuarantineScript);
   const scriptSource = readFileSync(localScript, 'utf8');
   const injectionMarker = '  $manifest = [ordered]@{';
-  assert.equal(
-    scriptSource.includes(injectionMarker),
-    true,
-    'quarantine manifest marker must remain injectable'
-  );
+  assert.equal(scriptSource.includes(injectionMarker), true, 'quarantine manifest marker must remain injectable');
   writeFileSync(
     localScript,
     scriptSource.replace(
@@ -688,11 +595,7 @@ test('quarantine failure cleanup deletes only held invocation-created objects', 
   assert.equal(readFileSync(sentinelPath, 'utf8'), 'keep');
   assert.equal(existsSync(destination), true);
   for (const name of requiredNames) {
-    assert.equal(
-      existsSync(join(destination, name)),
-      false,
-      `cleanup left invocation-created ${name}`
-    );
+    assert.equal(existsSync(join(destination, name)), false, `cleanup left invocation-created ${name}`);
   }
   assert.equal(existsSync(join(destination, 'manifest.json')), false);
 
@@ -714,16 +617,9 @@ test('manifest-bound purge refuses tampered backups and preserves every source',
   const manifest = createManifestFixture(fixture, '20260724T120000010Z');
   assertManifestContainment(fixture, manifest);
   const tamperedEntry = manifest.files.at(-1);
-  writeFileSync(
-    resolve(manifest.quarantinePath, tamperedEntry.backupRelativePath),
-    'tampered'
-  );
+  writeFileSync(resolve(manifest.quarantinePath, tamperedEntry.backupRelativePath), 'tampered');
 
-  const purge = runPurgePowerShell(
-    fixture,
-    repositoryPurgeScript,
-    manifest.manifestPath
-  );
+  const purge = runPurgePowerShell(fixture, repositoryPurgeScript, manifest.manifestPath);
 
   assert.notEqual(purge.status, 0, diagnostic(purge));
   assert.match(purge.stderr, /backup checksum mismatch/i, diagnostic(purge));
@@ -738,11 +634,7 @@ test('manifest-bound purge normalizes a relative dot manifest path', () => {
   const relativeManifest = `./${relative(fixture.root, manifest.manifestPath)
     .replaceAll('\\', '/')
     .replace('/manifest.json', '/./manifest.json')}`;
-  const purge = runPurgePowerShell(
-    fixture,
-    repositoryPurgeScript,
-    relativeManifest
-  );
+  const purge = runPurgePowerShell(fixture, repositoryPurgeScript, relativeManifest);
 
   assert.equal(purge.status, 0, diagnostic(purge));
   for (const name of fixture.files.keys()) {
@@ -754,11 +646,7 @@ test('manifest-bound purge rejects a device-prefixed public manifest path', () =
   const fixture = newFixture();
   const manifest = createManifestFixture(fixture, '20260724T120000035Z');
   const deviceManifest = `\\\\?\\${manifest.manifestPath}`;
-  const purge = runPurgePowerShell(
-    fixture,
-    repositoryPurgeScript,
-    deviceManifest
-  );
+  const purge = runPurgePowerShell(fixture, repositoryPurgeScript, deviceManifest);
 
   assert.notEqual(purge.status, 0, diagnostic(purge));
   assert.match(purge.stderr, /canonical|fixed-drive|local-drive|path/i);
@@ -769,22 +657,11 @@ test('manifest-bound purge rejects a device-prefixed public manifest path', () =
 
 test('manifest-bound purge rejects substituted source and quarantine ancestors', () => {
   const sourceFixture = newFixture();
-  const sourceManifest = createManifestFixture(
-    sourceFixture,
-    '20260724T120000025Z'
-  );
+  const sourceManifest = createManifestFixture(sourceFixture, '20260724T120000025Z');
   const realBackendRoot = join(sourceFixture.sourceRoot, 'real-backend');
   renameSync(join(sourceFixture.sourceRoot, 'backend'), realBackendRoot);
-  symlinkSync(
-    realBackendRoot,
-    join(sourceFixture.sourceRoot, 'backend'),
-    'junction'
-  );
-  const sourceResult = runPurgePowerShell(
-    sourceFixture,
-    repositoryPurgeScript,
-    sourceManifest.manifestPath
-  );
+  symlinkSync(realBackendRoot, join(sourceFixture.sourceRoot, 'backend'), 'junction');
+  const sourceResult = runPurgePowerShell(sourceFixture, repositoryPurgeScript, sourceManifest.manifestPath);
   assert.notEqual(sourceResult.status, 0, diagnostic(sourceResult));
   assert.match(sourceResult.stderr, /reparse|junction/i, diagnostic(sourceResult));
   for (const [name, bytes] of sourceFixture.files) {
@@ -792,15 +669,9 @@ test('manifest-bound purge rejects substituted source and quarantine ancestors',
   }
 
   const quarantineFixture = newFixture();
-  const quarantineManifest = createManifestFixture(
-    quarantineFixture,
-    '20260724T120000026Z'
-  );
+  const quarantineManifest = createManifestFixture(quarantineFixture, '20260724T120000026Z');
   const easyRewindPath = join(quarantineFixture.localAppData, 'easy-rewind');
-  const realEasyRewindPath = join(
-    quarantineFixture.localAppData,
-    'real-easy-rewind'
-  );
+  const realEasyRewindPath = join(quarantineFixture.localAppData, 'real-easy-rewind');
   renameSync(easyRewindPath, realEasyRewindPath);
   symlinkSync(realEasyRewindPath, easyRewindPath, 'junction');
   const quarantineResult = runPurgePowerShell(
@@ -809,16 +680,9 @@ test('manifest-bound purge rejects substituted source and quarantine ancestors',
     quarantineManifest.manifestPath
   );
   assert.notEqual(quarantineResult.status, 0, diagnostic(quarantineResult));
-  assert.match(
-    quarantineResult.stderr,
-    /reparse|junction/i,
-    diagnostic(quarantineResult)
-  );
+  assert.match(quarantineResult.stderr, /reparse|junction/i, diagnostic(quarantineResult));
   for (const [name, bytes] of quarantineFixture.files) {
-    assert.deepEqual(
-      readFileSync(join(quarantineFixture.dataRoot, name)),
-      bytes
-    );
+    assert.deepEqual(readFileSync(join(quarantineFixture.dataRoot, name)), bytes);
   }
 });
 
@@ -831,17 +695,10 @@ test('manifest-bound purge removes only verified source files', () => {
   writeFileSync(sourceSentinel, 'keep');
   writeFileSync(quarantineSentinel, 'keep-quarantine');
   const backupBytes = new Map(
-    manifest.files.map((entry) => [
-      entry.name,
-      readFileSync(resolve(manifest.quarantinePath, entry.backupRelativePath)),
-    ])
+    manifest.files.map(entry => [entry.name, readFileSync(resolve(manifest.quarantinePath, entry.backupRelativePath))])
   );
 
-  const purge = runPurgePowerShell(
-    fixture,
-    repositoryPurgeScript,
-    manifest.manifestPath
-  );
+  const purge = runPurgePowerShell(fixture, repositoryPurgeScript, manifest.manifestPath);
 
   assert.equal(purge.status, 0, diagnostic(purge));
   for (const name of fixture.files.keys()) {
@@ -870,17 +727,10 @@ test('manifest-bound purge validates sensitivity metadata and BOM before deletio
       writeFileSync(manifest.manifestPath, `${JSON.stringify(manifest)}\n`);
     } else {
       const bytes = readFileSync(manifest.manifestPath);
-      writeFileSync(
-        manifest.manifestPath,
-        Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), bytes])
-      );
+      writeFileSync(manifest.manifestPath, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), bytes]));
     }
 
-    const purge = runPurgePowerShell(
-      fixture,
-      repositoryPurgeScript,
-      manifest.manifestPath
-    );
+    const purge = runPurgePowerShell(fixture, repositoryPurgeScript, manifest.manifestPath);
     assert.notEqual(purge.status, 0, `${mutation}: ${diagnostic(purge)}`);
     for (const [name, bytes] of fixture.files) {
       assert.deepEqual(readFileSync(join(fixture.dataRoot, name)), bytes);
@@ -891,12 +741,10 @@ test('manifest-bound purge validates sensitivity metadata and BOM before deletio
 test('manifest-bound purge uses one WhatIf decision and removes nothing', () => {
   const fixture = newFixture();
   const manifest = createManifestFixture(fixture, '20260724T120000032Z');
-  const purge = runPurgePowerShell(
-    fixture,
-    repositoryPurgeScript,
-    manifest.manifestPath,
-    ['-WhatIf', '-Confirm:$false']
-  );
+  const purge = runPurgePowerShell(fixture, repositoryPurgeScript, manifest.manifestPath, [
+    '-WhatIf',
+    '-Confirm:$false',
+  ]);
 
   assert.equal(purge.status, 0, diagnostic(purge));
   assert.equal((purge.stdout.match(/What if:/g) ?? []).length, 1, purge.stdout);

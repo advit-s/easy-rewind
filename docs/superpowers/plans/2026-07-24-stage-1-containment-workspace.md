@@ -99,18 +99,18 @@ Every `git add` command below names Stage 1 paths explicitly.
 Stage 1 pins versions without performing the Stage 3 AI SDK migration or the
 Stage 6 Electron lifecycle/package repair.
 
-| Component | Pin | Stage 1 rationale |
-|---|---:|---|
-| Node.js | 24.18.0 | selected LTS for development, CI, standalone |
-| npm | 11.6.2 | one documented package manager |
-| Electron | 43.2.0 | selected packaged runtime; verified with native modules in Stage 6 |
-| Electron Builder | 26.15.3 | current stable builder line |
-| `@electron/rebuild` | 4.2.0 | explicit native ABI rebuild tool |
-| `better-sqlite3` | 13.0.1 | supported Node line; Electron ABI verification deferred to Stage 6 |
-| Jest | 30.4.2 | existing test major, exact pin |
-| ESLint | 10.7.0 | Node 24-compatible exact pin |
-| Prettier | 3.9.6 | exact formatting tool |
-| Secretlint and preset | 13.0.4 | local and CI secret scan |
+| Component             |     Pin | Stage 1 rationale                                                  |
+| --------------------- | ------: | ------------------------------------------------------------------ |
+| Node.js               | 24.18.0 | selected LTS for development, CI, standalone                       |
+| npm                   |  11.6.2 | one documented package manager                                     |
+| Electron              |  43.2.0 | selected packaged runtime; verified with native modules in Stage 6 |
+| Electron Builder      | 26.15.3 | current stable builder line                                        |
+| `@electron/rebuild`   |   4.2.0 | explicit native ABI rebuild tool                                   |
+| `better-sqlite3`      |  13.0.1 | supported Node line; Electron ABI verification deferred to Stage 6 |
+| Jest                  |  30.4.2 | existing test major, exact pin                                     |
+| ESLint                |  10.7.0 | Node 24-compatible exact pin                                       |
+| Prettier              |   3.9.6 | exact formatting tool                                              |
+| Secretlint and preset |  13.0.4 | local and CI secret scan                                           |
 
 `@google/generative-ai` remains pinned at `0.24.1` only long enough to preserve
 current behavior; Stage 3 replaces it with `@google/genai` behind the provider
@@ -119,6 +119,7 @@ boundary.
 ### Task 1: Establish the Stage 1 evidence ledger
 
 **Files:**
+
 - Create: `docs/release/requirements-evidence.md`
 - Create: `docs/release/stage-1-verification.md`
 
@@ -131,22 +132,22 @@ Create `docs/release/requirements-evidence.md` with this initial content:
 
 Statuses: `not-started`, `failing`, `implemented`, `verified`, `blocked`.
 
-| ID | Requirement | Stage | Status | Implementation | Test/command | Evidence | Recovery |
-|---|---|---:|---|---|---|---|---|
-| S1-01 | Stop only Easy Rewind backend/Electron processes before backup | 1 | not-started | `scripts/legacy/quarantine-legacy.ps1` | `npm run test:containment` | Stage 1 report | Relaunch only after purge |
-| S1-02 | Copy DB/WAL/SHM/settings together before opening SQLite | 1 | not-started | containment script | fixture and live manifest checks | quarantine manifest | Preserve quarantine |
-| S1-03 | Restrict quarantine to current Windows user | 1 | not-started | containment script | ACL assertion and `Get-Acl` | Stage 1 report | Abort before purge |
-| S1-04 | Record UTC backup time, source paths, sizes, and SHA-256 | 1 | not-started | containment script | manifest assertions | `manifest.json` | Regenerate before purge |
-| S1-05 | Exclude sensitive/runtime data from Git, builds, exports, logs, tests | 1 | not-started | ignores and hygiene checker | `npm run check:hygiene` | Stage 1 report | Restore ignore rules |
-| S1-06 | Purge DB/WAL/SHM/settings and real `.env` from worktree | 1 | not-started | purge script and exact removal | source absence assertions | Stage 1 report | Restore only from quarantine copy |
-| S1-07 | Remove nested Git repository and generated dependencies | 1 | not-started | exact cleanup commands | hygiene checker | Stage 1 report | Reinstall with `npm ci` |
-| S1-08 | Add placeholder-only `.env.example` | 1 | not-started | `backend/.env.example` | Secretlint | Stage 1 report | Recreate from tracked example |
-| S1-09 | Select Node LTS, engines, exact dependency pins, one lockfile | 1 | not-started | workspace manifests | `npm ci`; version checks | Stage 1 report | Revert manifests/lock together |
-| S1-10 | Root scripts install, develop, lint, format, unit/integration test, validate extension, build, package Windows, verify, and scan | 1 | not-started | root `package.json` | `npm run verify` | Stage 1 report | Run component commands directly |
-| S1-11 | Add CI secret scanning and repository hygiene | 1 | not-started | `.github/workflows/ci.yml` | workflow lint/readback | CI run URL | Revert CI separately |
-| S1-12 | Document Git-history purge separately | 1 | not-started | history guide | command review | Stage 1 report | Mirror backup before rewrite |
-| S1-13 | Require Gemini key revocation and replacement | 1 | not-started | credential response guide | manual confirmation | user-controlled evidence | Revoke again if uncertain |
-| S1-14 | Never migrate or import during Stage 1 | 1 | not-started | design and containment boundary | source inspection | Stage 1 report | Stop and discard working copy |
+| ID    | Requirement                                                                                                                      | Stage | Status      | Implementation                         | Test/command                     | Evidence                 | Recovery                          |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------- | ----: | ----------- | -------------------------------------- | -------------------------------- | ------------------------ | --------------------------------- |
+| S1-01 | Stop only Easy Rewind backend/Electron processes before backup                                                                   |     1 | not-started | `scripts/legacy/quarantine-legacy.ps1` | `npm run test:containment`       | Stage 1 report           | Relaunch only after purge         |
+| S1-02 | Copy DB/WAL/SHM/settings together before opening SQLite                                                                          |     1 | not-started | containment script                     | fixture and live manifest checks | quarantine manifest      | Preserve quarantine               |
+| S1-03 | Restrict quarantine to current Windows user                                                                                      |     1 | not-started | containment script                     | ACL assertion and `Get-Acl`      | Stage 1 report           | Abort before purge                |
+| S1-04 | Record UTC backup time, source paths, sizes, and SHA-256                                                                         |     1 | not-started | containment script                     | manifest assertions              | `manifest.json`          | Regenerate before purge           |
+| S1-05 | Exclude sensitive/runtime data from Git, builds, exports, logs, tests                                                            |     1 | not-started | ignores and hygiene checker            | `npm run check:hygiene`          | Stage 1 report           | Restore ignore rules              |
+| S1-06 | Purge DB/WAL/SHM/settings and real `.env` from worktree                                                                          |     1 | not-started | purge script and exact removal         | source absence assertions        | Stage 1 report           | Restore only from quarantine copy |
+| S1-07 | Remove nested Git repository and generated dependencies                                                                          |     1 | not-started | exact cleanup commands                 | hygiene checker                  | Stage 1 report           | Reinstall with `npm ci`           |
+| S1-08 | Add placeholder-only `.env.example`                                                                                              |     1 | not-started | `backend/.env.example`                 | Secretlint                       | Stage 1 report           | Recreate from tracked example     |
+| S1-09 | Select Node LTS, engines, exact dependency pins, one lockfile                                                                    |     1 | not-started | workspace manifests                    | `npm ci`; version checks         | Stage 1 report           | Revert manifests/lock together    |
+| S1-10 | Root scripts install, develop, lint, format, unit/integration test, validate extension, build, package Windows, verify, and scan |     1 | not-started | root `package.json`                    | `npm run verify`                 | Stage 1 report           | Run component commands directly   |
+| S1-11 | Add CI secret scanning and repository hygiene                                                                                    |     1 | not-started | `.github/workflows/ci.yml`             | workflow lint/readback           | CI run URL               | Revert CI separately              |
+| S1-12 | Document Git-history purge separately                                                                                            |     1 | not-started | history guide                          | command review                   | Stage 1 report           | Mirror backup before rewrite      |
+| S1-13 | Require Gemini key revocation and replacement                                                                                    |     1 | not-started | credential response guide              | manual confirmation              | user-controlled evidence | Revoke again if uncertain         |
+| S1-14 | Never migrate or import during Stage 1                                                                                           |     1 | not-started | design and containment boundary        | source inspection                | Stage 1 report           | Stop and discard working copy     |
 ```
 
 - [ ] **Step 2: Create the verification report template**
@@ -193,17 +194,17 @@ npm:
 
 ## Workspace evidence
 
-| Command | Exit | Evidence summary |
-|---|---:|---|
-| `node --version` |  |  |
-| `npm --version` |  |  |
-| `npm ci` |  |  |
-| `npm run scan:secrets` |  |  |
-| `npm run check:hygiene` |  |  |
-| `npm run lint` |  |  |
-| `npm run format:check` |  |  |
-| `npm test` |  |  |
-| `npm run verify` |  |  |
+| Command                 | Exit | Evidence summary |
+| ----------------------- | ---: | ---------------- |
+| `node --version`        |      |                  |
+| `npm --version`         |      |                  |
+| `npm ci`                |      |                  |
+| `npm run scan:secrets`  |      |                  |
+| `npm run check:hygiene` |      |                  |
+| `npm run lint`          |      |                  |
+| `npm run format:check`  |      |                  |
+| `npm test`              |      |                  |
+| `npm run verify`        |      |                  |
 
 ## Recovery rehearsal
 
@@ -248,6 +249,7 @@ git commit -m "docs: add stage one evidence ledger"
 ### Task 2: Add failing containment regression tests
 
 **Files:**
+
 - Create: `scripts/legacy/quarantine-legacy.test.mjs`
 - Test: `scripts/legacy/quarantine-legacy.test.mjs`
 
@@ -258,32 +260,15 @@ Create `scripts/legacy/quarantine-legacy.test.mjs`:
 ```js
 import assert from 'node:assert/strict';
 import { afterEach, test } from 'node:test';
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 
 const repositoryRoot = resolve(import.meta.dirname, '..', '..');
-const quarantineScript = join(
-  repositoryRoot,
-  'scripts',
-  'legacy',
-  'quarantine-legacy.ps1'
-);
-const purgeScript = join(
-  repositoryRoot,
-  'scripts',
-  'legacy',
-  'purge-legacy-source.ps1'
-);
+const quarantineScript = join(repositoryRoot, 'scripts', 'legacy', 'quarantine-legacy.ps1');
+const purgeScript = join(repositoryRoot, 'scripts', 'legacy', 'purge-legacy-source.ps1');
 const tempRoots = [];
 
 function newFixture() {
@@ -309,11 +294,10 @@ function newFixture() {
 }
 
 function runPowerShell(script, args) {
-  const result = spawnSync(
-    'powershell.exe',
-    ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...args],
-    { cwd: repositoryRoot, encoding: 'utf8' }
-  );
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, ...args], {
+    cwd: repositoryRoot,
+    encoding: 'utf8',
+  });
   return result;
 }
 
@@ -351,10 +335,7 @@ test('quarantine copies the coherent set byte-for-byte and writes a safe manifes
     assert.ok(original, `unexpected manifest entry ${entry.name}`);
     assert.equal(entry.size, original.byteLength);
     assert.equal(entry.sha256, sha256(original));
-    assert.deepEqual(
-      readFileSync(join(output.quarantinePath, entry.backupRelativePath)),
-      original
-    );
+    assert.deepEqual(readFileSync(join(output.quarantinePath, entry.backupRelativePath)), original);
   }
 
   assert.equal(existsSync(output.manifestPath), true);
@@ -390,16 +371,9 @@ test('manifest-bound purge refuses tampered backups and preserves every source',
   ]);
   assert.equal(backup.status, 0, backup.stderr);
   const manifest = JSON.parse(backup.stdout);
-  writeFileSync(
-    join(manifest.quarantinePath, manifest.files[0].backupRelativePath),
-    'tampered'
-  );
+  writeFileSync(join(manifest.quarantinePath, manifest.files[0].backupRelativePath), 'tampered');
 
-  const purge = runPowerShell(purgeScript, [
-    '-ManifestPath',
-    manifest.manifestPath,
-    '-Confirm:$false',
-  ]);
+  const purge = runPowerShell(purgeScript, ['-ManifestPath', manifest.manifestPath, '-Confirm:$false']);
 
   assert.notEqual(purge.status, 0);
   assert.match(purge.stderr, /backup checksum mismatch/i);
@@ -423,11 +397,7 @@ test('manifest-bound purge removes only verified source files', () => {
   assert.equal(backup.status, 0, backup.stderr);
   const manifest = JSON.parse(backup.stdout);
 
-  const purge = runPowerShell(purgeScript, [
-    '-ManifestPath',
-    manifest.manifestPath,
-    '-Confirm:$false',
-  ]);
+  const purge = runPowerShell(purgeScript, ['-ManifestPath', manifest.manifestPath, '-Confirm:$false']);
 
   assert.equal(purge.status, 0, purge.stderr);
   for (const name of fixture.files.keys()) {
@@ -458,6 +428,7 @@ git commit -m "test: specify legacy containment guarantees"
 ### Task 3: Implement fail-closed quarantine and manifest-bound purge
 
 **Files:**
+
 - Create: `scripts/legacy/quarantine-legacy.ps1`
 - Create: `scripts/legacy/purge-legacy-source.ps1`
 - Test: `scripts/legacy/quarantine-legacy.test.mjs`
@@ -765,6 +736,7 @@ git commit -m "feat: add verified legacy quarantine workflow"
 ### Task 4: Execute quarantine before repository purge
 
 **Files:**
+
 - Read only: `backend/data/easy-rewind.db`
 - Read only: `backend/data/easy-rewind.db-wal`
 - Read only: `backend/data/easy-rewind.db-shm`
@@ -938,6 +910,7 @@ git commit -m "docs: record verified legacy containment"
 ### Task 5: Enforce repository hygiene and purge generated/sensitive material
 
 **Files:**
+
 - Create: `scripts/hygiene/check-repository.test.mjs`
 - Create: `scripts/hygiene/check-repository.mjs`
 - Modify: `.gitignore`
@@ -1047,24 +1020,8 @@ const forbiddenExact = new Set([
   'backend/data/settings.json',
   'tmp_test.js',
 ]);
-const forbiddenSegments = new Set([
-  'node_modules',
-  'dist',
-  'build',
-  'logs',
-  'exports',
-  'legacy-backup',
-]);
-const forbiddenSuffixes = [
-  '.db',
-  '.db-wal',
-  '.db-shm',
-  '.sqlite',
-  '.sqlite-wal',
-  '.sqlite-shm',
-  '.log',
-  '.node',
-];
+const forbiddenSegments = new Set(['node_modules', 'dist', 'build', 'logs', 'exports', 'legacy-backup']);
+const forbiddenSuffixes = ['.db', '.db-wal', '.db-shm', '.sqlite', '.sqlite-wal', '.sqlite-shm', '.log', '.node'];
 
 function normalize(path) {
   return path.split(sep).join('/');
@@ -1076,10 +1033,7 @@ function isForbidden(relativePath) {
   if (forbiddenExact.has(normalized)) return true;
   if (segments.some(segment => forbiddenSegments.has(segment))) return true;
   if (segments.includes('.git') && normalized !== '.git') return true;
-  if (
-    basename(normalized).startsWith('.env') &&
-    !normalized.endsWith('.env.example')
-  ) {
+  if (basename(normalized).startsWith('.env') && !normalized.endsWith('.env.example')) {
     return true;
   }
   return forbiddenSuffixes.some(suffix => normalized.endsWith(suffix));
@@ -1121,9 +1075,7 @@ const violations = candidates
   .sort();
 
 if (violations.length > 0) {
-  process.stderr.write(
-    `Forbidden repository material detected:\n${violations.join('\n')}\n`
-  );
+  process.stderr.write(`Forbidden repository material detected:\n${violations.join('\n')}\n`);
   process.exit(1);
 }
 
@@ -1311,6 +1263,7 @@ appear in the commit; their absence is recorded in verification evidence.
 ### Task 6: Normalize the npm workspace and exact dependency graph
 
 **Files:**
+
 - Create: `package.json`
 - Create: `.nvmrc`
 - Create: `.npmrc`
@@ -1339,10 +1292,7 @@ Create `package.json`:
     "npm": ">=11.6.2 <12"
   },
   "packageManager": "npm@11.6.2",
-  "workspaces": [
-    "backend",
-    "desktop"
-  ],
+  "workspaces": ["backend", "desktop"],
   "scripts": {
     "install:clean": "npm ci",
     "start": "npm run start --workspace=easy-rewind-backend",
@@ -1496,35 +1446,23 @@ try {
     recursive: true,
     filter(source) {
       const relative = source.slice(sourceBackend.length).replaceAll('\\', '/');
-      return ![
-        '/node_modules',
-        '/.git',
-        '/.env',
-        '/data',
-      ].some(excluded => relative === excluded || relative.startsWith(`${excluded}/`));
+      return !['/node_modules', '/.git', '/.env', '/data'].some(
+        excluded => relative === excluded || relative.startsWith(`${excluded}/`)
+      );
     },
   });
 
   const jest = join(repositoryRoot, 'node_modules', 'jest', 'bin', 'jest.js');
   const result = spawnSync(
     process.execPath,
-    [
-      '--experimental-vm-modules',
-      jest,
-      '--forceExit',
-      '--detectOpenHandles',
-      '--runInBand',
-    ],
+    ['--experimental-vm-modules', jest, '--forceExit', '--detectOpenHandles', '--runInBand'],
     {
       cwd: temporaryBackend,
       encoding: 'utf8',
       env: {
         ...process.env,
         NODE_ENV: 'test',
-        NODE_PATH: [
-          join(repositoryRoot, 'node_modules'),
-          process.env.NODE_PATH,
-        ].filter(Boolean).join(delimiter),
+        NODE_PATH: [join(repositoryRoot, 'node_modules'), process.env.NODE_PATH].filter(Boolean).join(delimiter),
         DATABASE_PATH: join(temporaryRoot, 'runtime', 'test.db'),
         GEMINI_API_KEY: '',
         ALLOWED_ORIGINS: 'http://127.0.0.1:5000',
@@ -1537,9 +1475,7 @@ try {
 
   const leaked = forbiddenSourcePaths.filter(existsSync);
   if (leaked.length > 0) {
-    process.stderr.write(
-      `Legacy tests wrote into the repository:\n${leaked.join('\n')}\n`
-    );
+    process.stderr.write(`Legacy tests wrote into the repository:\n${leaked.join('\n')}\n`);
     process.exitCode = 1;
   } else {
     process.exitCode = result.status ?? 1;
@@ -1568,16 +1504,8 @@ const manifestPath = join(extensionRoot, 'manifest.json');
 const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
 
 assert.equal(manifest.manifest_version, 3, 'extension must use Manifest V3');
-assert.equal(
-  typeof manifest.background?.service_worker,
-  'string',
-  'manifest must declare a service worker'
-);
-assert.equal(
-  typeof manifest.action?.default_popup,
-  'string',
-  'manifest must declare an action popup'
-);
+assert.equal(typeof manifest.background?.service_worker, 'string', 'manifest must declare a service worker');
+assert.equal(typeof manifest.action?.default_popup, 'string', 'manifest must declare an action popup');
 
 const referencedFiles = [
   manifest.background.service_worker,
@@ -1587,14 +1515,10 @@ const referencedFiles = [
   ...Object.values(manifest.action.icons ?? {}),
 ];
 
-const missing = [...new Set(referencedFiles)].filter(
-  relativePath => !existsSync(join(extensionRoot, relativePath))
-);
+const missing = [...new Set(referencedFiles)].filter(relativePath => !existsSync(join(extensionRoot, relativePath)));
 assert.deepEqual(missing, [], `manifest references missing files: ${missing.join(', ')}`);
 
-process.stdout.write(
-  `Extension baseline validation passed (${referencedFiles.length} references).\n`
-);
+process.stdout.write(`Extension baseline validation passed (${referencedFiles.length} references).\n`);
 ```
 
 This is a structural Stage 1 gate only. Permission reduction, privacy controls,
@@ -1720,6 +1644,7 @@ git commit -m "build: normalize npm workspace and toolchain"
 ### Task 7: Add Stage 1 CI and security-response documentation
 
 **Files:**
+
 - Modify: `.github/workflows/ci.yml`
 - Create: `SECURITY.md`
 - Create: `docs/security/credential-response.md`
@@ -1850,7 +1775,7 @@ History rewriting and file deletion are containment steps, not revocation.
 
 Create `docs/security/git-history-remediation.md`:
 
-```markdown
+````markdown
 # Git History Remediation
 
 Perform this only after Stage 1 passes and all collaborators have coordinated a
@@ -1877,6 +1802,7 @@ git filter-repo --force --invert-paths `
   --path backend/data/easy-rewind.db-shm `
   --path backend/data/settings.json
 ```
+````
 
 Scan all rewritten refs for secrets and forbidden paths before pushing. If the
 credential appeared at any other path or inside other file content, create a
@@ -1898,7 +1824,8 @@ git push --force --mirror
 All collaborators must discard old clones and re-clone. Forks, caches, release
 artifacts, pull-request refs, and external mirrors may require separate cleanup.
 The Gemini key must still be revoked.
-```
+
+````
 
 - [ ] **Step 5: Update the README setup entry point**
 
@@ -1915,7 +1842,7 @@ Install all workspace dependencies from the repository root:
 
 ```powershell
 npm ci
-```
+````
 
 Run the current standalone backend:
 
@@ -1933,7 +1860,8 @@ Do not place credentials, databases, WAL/SHM files, settings, logs, exports, or
 personal data in the repository. Packaged Electron uses Electron's embedded Node
 runtime; native-module compatibility is verified separately during desktop
 packaging.
-```
+
+````
 
 Retain product feature documentation, but remove Android claims and any
 instructions that direct users to install separately inside `backend` or store
@@ -1948,7 +1876,7 @@ rg -n "node-version: 24.18.0|npm ci|scan:secrets|check:hygiene" .github/workflow
 rg -n "revoke|not revocation|legacy-backup|filter-repo" SECURITY.md docs/security
 npm.cmd run scan:secrets
 npm.cmd run check:hygiene
-```
+````
 
 Expected: required controls are found and both npm checks exit 0.
 
@@ -1962,6 +1890,7 @@ git commit -m "ci: add containment and secret gates"
 ### Task 8: Run the complete Stage 1 exit gate
 
 **Files:**
+
 - Modify: `docs/release/requirements-evidence.md`
 - Modify: `docs/release/stage-1-verification.md`
 

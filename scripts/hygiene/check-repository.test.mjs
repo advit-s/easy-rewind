@@ -1,25 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import {
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync,
-} from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 
 const checker = fileURLToPath(new URL('./check-repository.mjs', import.meta.url));
-const repositoryGitignore = fileURLToPath(
-  new URL('../../.gitignore', import.meta.url),
-);
-const repositoryPrettierignore = fileURLToPath(
-  new URL('../../.prettierignore', import.meta.url),
-);
+const repositoryGitignore = fileURLToPath(new URL('../../.gitignore', import.meta.url));
+const repositoryPrettierignore = fileURLToPath(new URL('../../.prettierignore', import.meta.url));
 const roots = [];
 
 function fixture(files = {}) {
@@ -56,7 +45,7 @@ function assertRejected(root, relativePath, ...args) {
   assert.notEqual(result.status, 0);
   assert.match(
     result.stderr,
-    new RegExp(relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replaceAll('/', '[\\\\/]')),
+    new RegExp(relativePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replaceAll('/', '[\\\\/]'))
   );
   assert.doesNotMatch(`${result.stdout}${result.stderr}`, /DO_NOT_PRINT_THIS_VALUE/);
 }
@@ -66,18 +55,11 @@ function createDirectoryLinkOrSkip(t, target, link) {
     symlinkSync(target, link, 'junction');
     return true;
   } catch (error) {
-    if (
-      error &&
-      typeof error === 'object' &&
-      ['EACCES', 'EINVAL', 'ENOSYS', 'ENOTSUP', 'EPERM'].includes(error.code)
-    ) {
+    if (error && typeof error === 'object' && ['EACCES', 'EINVAL', 'ENOSYS', 'ENOTSUP', 'EPERM'].includes(error.code)) {
       t.skip('Directory links are unavailable in this environment.');
       return false;
     }
-    const code =
-      error && typeof error === 'object' && typeof error.code === 'string'
-        ? error.code
-        : 'UNKNOWN';
+    const code = error && typeof error === 'object' && typeof error.code === 'string' ? error.code : 'UNKNOWN';
     throw new Error(`Unexpected directory-link setup failure (${code}).`);
   }
 }
@@ -152,7 +134,7 @@ test('detects forbidden paths when the repository root contains spaces', () => {
   assertRejected(root, 'backend/.env', '--filesystem');
 });
 
-test('filesystem walk does not follow directory symlinks or junctions', (t) => {
+test('filesystem walk does not follow directory symlinks or junctions', t => {
   const root = fixture({ 'src/index.js': 'export {};\n' });
   const external = fixture({ 'backend/.env': 'DO_NOT_PRINT_THIS_VALUE' });
   if (!createDirectoryLinkOrSkip(t, external, join(root, 'linked-external'))) return;
@@ -161,7 +143,7 @@ test('filesystem walk does not follow directory symlinks or junctions', (t) => {
   assert.equal(result.status, 0, result.stderr);
 });
 
-test('filesystem mode rejects a forbidden path that is a directory link', (t) => {
+test('filesystem mode rejects a forbidden path that is a directory link', t => {
   const root = fixture({ 'src/index.js': 'export {};\n' });
   const external = fixture({ 'note.txt': 'DO_NOT_PRINT_THIS_VALUE' });
   if (!createDirectoryLinkOrSkip(t, external, join(root, 'logs'))) return;
@@ -169,7 +151,7 @@ test('filesystem mode rejects a forbidden path that is a directory link', (t) =>
   assertRejected(root, 'logs', '--filesystem');
 });
 
-test('fails closed when the requested root is a directory link', (t) => {
+test('fails closed when the requested root is a directory link', t => {
   const target = fixture({ 'backend/.env': 'DO_NOT_PRINT_THIS_VALUE' });
   const parent = fixture();
   const linkedRoot = join(parent, 'linked-root');
@@ -179,13 +161,10 @@ test('fails closed when the requested root is a directory link', (t) => {
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /symbolic|junction|reparse|link/i);
   assert.doesNotMatch(result.stderr, /backend[\\\/]\.env/);
-  assert.doesNotMatch(
-    `${result.stdout}${result.stderr}`,
-    /DO_NOT_PRINT_THIS_VALUE/,
-  );
+  assert.doesNotMatch(`${result.stdout}${result.stderr}`, /DO_NOT_PRINT_THIS_VALUE/);
 });
 
-test('fails closed when an ancestor of the requested root is a directory link', (t) => {
+test('fails closed when an ancestor of the requested root is a directory link', t => {
   const target = fixture({
     'repository/src/index.js': 'DO_NOT_PRINT_THIS_VALUE',
   });
@@ -196,33 +175,21 @@ test('fails closed when an ancestor of the requested root is a directory link', 
   const result = check(join(linkedAncestor, 'repository'), '--filesystem');
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /ancestor|symbolic|junction|reparse|link/i);
-  assert.doesNotMatch(
-    `${result.stdout}${result.stderr}`,
-    /DO_NOT_PRINT_THIS_VALUE|src[\\\/]index\.js/,
-  );
+  assert.doesNotMatch(`${result.stdout}${result.stderr}`, /DO_NOT_PRINT_THIS_VALUE|src[\\\/]index\.js/);
 });
 
-test('fails closed when root Git metadata is a directory link', (t) => {
+test('fails closed when root Git metadata is a directory link', t => {
   const metadataOwner = fixture();
   initializeRepository(metadataOwner);
   const root = fixture({ 'src/index.js': 'DO_NOT_PRINT_THIS_VALUE' });
-  if (
-    !createDirectoryLinkOrSkip(
-      t,
-      join(metadataOwner, '.git'),
-      join(root, '.git'),
-    )
-  ) {
+  if (!createDirectoryLinkOrSkip(t, join(metadataOwner, '.git'), join(root, '.git'))) {
     return;
   }
 
   const result = check(root);
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /\.git|symbolic|junction|reparse|link/i);
-  assert.doesNotMatch(
-    `${result.stdout}${result.stderr}`,
-    /DO_NOT_PRINT_THIS_VALUE|src[\\\/]index\.js/,
-  );
+  assert.doesNotMatch(`${result.stdout}${result.stderr}`, /DO_NOT_PRINT_THIS_VALUE|src[\\\/]index\.js/);
 });
 
 test('allows a normal root Git directory', () => {
@@ -237,13 +204,7 @@ test('allows a normal Git worktree metadata file', () => {
   const container = fixture();
   const root = join(container, 'worktree');
   const metadata = join(container, 'metadata');
-  const initialized = git(
-    container,
-    'init',
-    '--quiet',
-    `--separate-git-dir=${metadata}`,
-    root,
-  );
+  const initialized = git(container, 'init', '--quiet', `--separate-git-dir=${metadata}`, root);
   assert.equal(initialized.status, 0, initialized.stderr);
   mkdirSync(join(root, 'src'), { recursive: true });
   writeFileSync(join(root, 'src/index.js'), 'export {};\n');
@@ -331,14 +292,8 @@ test('ignore rules preserve release evidence while excluding root release output
   });
   initializeRepository(root);
 
-  assert.equal(
-    git(root, 'check-ignore', '--quiet', 'docs/release/new-evidence.md').status,
-    1,
-  );
-  assert.equal(
-    git(root, 'check-ignore', '--quiet', 'release/artifact.zip').status,
-    0,
-  );
+  assert.equal(git(root, 'check-ignore', '--quiet', 'docs/release/new-evidence.md').status, 1);
+  assert.equal(git(root, 'check-ignore', '--quiet', 'release/artifact.zip').status, 0);
   const prettierignore = readFileSync(repositoryPrettierignore, 'utf8');
   assert.match(prettierignore, /^\/release\/?$/m);
   assert.doesNotMatch(prettierignore, /^release\/?$/m);

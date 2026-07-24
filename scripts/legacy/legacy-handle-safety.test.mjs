@@ -1,25 +1,12 @@
 import assert from 'node:assert/strict';
-import {
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 
 const repositoryRoot = resolve(import.meta.dirname, '..', '..');
-const repositoryHelper = join(
-  repositoryRoot,
-  'scripts',
-  'legacy',
-  'legacy-handle-safety.ps1'
-);
+const repositoryHelper = join(repositoryRoot, 'scripts', 'legacy', 'legacy-handle-safety.ps1');
 
 test('directory reparse policy allows only non-name-surrogate Microsoft Cloud Filter tags', () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-reparse-policy-'));
@@ -53,30 +40,15 @@ $tags = @(
 
     const result = spawnSync(
       'powershell.exe',
-      [
-        '-NoLogo',
-        '-NonInteractive',
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        driverPath,
-      ],
+      ['-NoLogo', '-NonInteractive', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', driverPath],
       {
         cwd: fixtureRoot,
         encoding: 'utf8',
         timeout: 10_000,
       }
     );
-    assert.equal(
-      result.status,
-      0,
-      `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`
-    );
-    assert.deepEqual(
-      JSON.parse(result.stdout),
-      [true, true, false, false, false, false]
-    );
+    assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.deepEqual(JSON.parse(result.stdout), [true, true, false, false, false, false]);
   } finally {
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
@@ -85,14 +57,10 @@ $tags = @(
 test('delete-by-handle rolls back every prior disposition before close', () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-handle-safety-'));
   try {
-    assert.equal(
-      existsSync(repositoryHelper),
-      true,
-      'the shared native handle helper must exist'
-    );
+    assert.equal(existsSync(repositoryHelper), true, 'the shared native handle helper must exist');
     const helperPath = join(fixtureRoot, basename(repositoryHelper));
     copyFileSync(repositoryHelper, helperPath);
-    const paths = [0, 1, 2, 3].map((index) => {
+    const paths = [0, 1, 2, 3].map(index => {
       const path = join(fixtureRoot, `source-${index}.bin`);
       writeFileSync(path, Buffer.from([index, index + 1]));
       return path;
@@ -153,26 +121,14 @@ $afterCommit = @($paths | ForEach-Object { Test-Path -LiteralPath $_ })
 
     const result = spawnSync(
       'powershell.exe',
-      [
-        '-NoLogo',
-        '-NonInteractive',
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        driverPath,
-      ],
+      ['-NoLogo', '-NonInteractive', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', driverPath],
       {
         cwd: fixtureRoot,
         encoding: 'utf8',
         timeout: 10_000,
       }
     );
-    assert.equal(
-      result.status,
-      0,
-      `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`
-    );
+    assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
     const output = JSON.parse(result.stdout);
     assert.deepEqual(output.afterRollback, [true, true, true, true]);
     assert.deepEqual(output.afterCommit, [false, false, false, false]);
@@ -222,26 +178,14 @@ try {
 
     const result = spawnSync(
       'powershell.exe',
-      [
-        '-NoLogo',
-        '-NonInteractive',
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        driverPath,
-      ],
+      ['-NoLogo', '-NonInteractive', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', driverPath],
       {
         cwd: fixtureRoot,
         encoding: 'utf8',
         timeout: 10_000,
       }
     );
-    assert.equal(
-      result.status,
-      0,
-      `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`
-    );
+    assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
     assert.deepEqual(JSON.parse(result.stdout), { existsAfterFailure: false });
     assert.equal(existsSync(createdPath), false);
   } finally {
@@ -328,26 +272,14 @@ try {
 
     const result = spawnSync(
       'powershell.exe',
-      [
-        '-NoLogo',
-        '-NonInteractive',
-        '-NoProfile',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-File',
-        driverPath,
-      ],
+      ['-NoLogo', '-NonInteractive', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', driverPath],
       {
         cwd: fixtureRoot,
         encoding: 'utf8',
         timeout: 10_000,
       }
     );
-    assert.equal(
-      result.status,
-      0,
-      `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`
-    );
+    assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
     const output = JSON.parse(result.stdout);
     assert.equal(output.substitutionBlocked, true);
     assert.equal(output.sameIdentity, true);

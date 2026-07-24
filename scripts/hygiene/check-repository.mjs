@@ -25,10 +25,7 @@ const forbiddenSegments = new Set([
   'temp',
   'prebuilds',
 ]);
-const forbiddenNames = new Set([
-  'secrets.json',
-  'credentials.json',
-]);
+const forbiddenNames = new Set(['secrets.json', 'credentials.json']);
 const forbiddenSuffixes = [
   '.db',
   '.db-wal',
@@ -68,7 +65,7 @@ function isForbidden(relativePath) {
       (segment, index) =>
         forbiddenSegments.has(segment) &&
         !(segment === 'release' && index === 1 && segments[0] === 'docs') &&
-        !(segment === 'build' && index === 1 && segments[0] === 'scripts'),
+        !(segment === 'build' && index === 1 && segments[0] === 'scripts')
     )
   ) {
     return true;
@@ -76,7 +73,7 @@ function isForbidden(relativePath) {
   if (segments.includes('.git')) return true;
   if (name === '.env.example') return false;
   if (name === '.env' || name.startsWith('.env.')) return true;
-  return forbiddenSuffixes.some((suffix) => normalized.endsWith(suffix));
+  return forbiddenSuffixes.some(suffix => normalized.endsWith(suffix));
 }
 
 function walk(root, start = root) {
@@ -112,15 +109,11 @@ function parseRoot(argv) {
 }
 
 function inspectGit(root) {
-  const git = spawnSync(
-    'git',
-    ['ls-files', '-z', '--cached', '--others', '--exclude-standard'],
-    {
-      cwd: root,
-      encoding: 'utf8',
-      windowsHide: true,
-    },
-  );
+  const git = spawnSync('git', ['ls-files', '-z', '--cached', '--others', '--exclude-standard'], {
+    cwd: root,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
   if (git.error || git.status !== 0) {
     throw new Error('Git repository inspection failed.');
   }
@@ -148,11 +141,7 @@ function findNestedGitMetadata(root) {
         }
         continue;
       }
-      if (
-        entry.isDirectory() &&
-        !entry.isSymbolicLink() &&
-        !isForbidden(relativePath)
-      ) {
+      if (entry.isDirectory() && !entry.isSymbolicLink() && !isForbidden(relativePath)) {
         pending.push(absolute);
       }
     }
@@ -162,10 +151,7 @@ function findNestedGitMetadata(root) {
 
 function validateRoot(root) {
   const anchor = parse(root).root;
-  const components = root
-    .slice(anchor.length)
-    .split(sep)
-    .filter(Boolean);
+  const components = root.slice(anchor.length).split(sep).filter(Boolean);
   let current = anchor;
 
   for (const component of components) {
@@ -173,9 +159,7 @@ function validateRoot(root) {
     const metadata = lstatSync(current, { throwIfNoEntry: false });
     if (!metadata) break;
     if (metadata.isSymbolicLink()) {
-      throw new Error(
-        'Repository root path must not contain symbolic or reparse links.',
-      );
+      throw new Error('Repository root path must not contain symbolic or reparse links.');
     }
   }
 
@@ -192,9 +176,7 @@ function hasSafeGitMetadata(root) {
   const metadata = lstatSync(join(root, '.git'), { throwIfNoEntry: false });
   if (!metadata) return false;
   if (metadata.isSymbolicLink()) {
-    throw new Error(
-      'Git repository metadata must not be a symbolic or reparse link.',
-    );
+    throw new Error('Git repository metadata must not be a symbolic or reparse link.');
   }
   return true;
 }
@@ -202,9 +184,7 @@ function hasSafeGitMetadata(root) {
 function inspect(root, filesystemMode) {
   validateRoot(root);
   const hasGitMetadata = hasSafeGitMetadata(root);
-  return filesystemMode || !hasGitMetadata
-    ? walk(root)
-    : [...inspectGit(root), ...findNestedGitMetadata(root)];
+  return filesystemMode || !hasGitMetadata ? walk(root) : [...inspectGit(root), ...findNestedGitMetadata(root)];
 }
 
 function main() {
@@ -217,9 +197,7 @@ function main() {
       .sort((left, right) => left.localeCompare(right));
 
     if (violations.length > 0) {
-      process.stderr.write(
-        `Forbidden repository material detected:\n${violations.join('\n')}\n`,
-      );
+      process.stderr.write(`Forbidden repository material detected:\n${violations.join('\n')}\n`);
       process.exitCode = 1;
       return;
     }

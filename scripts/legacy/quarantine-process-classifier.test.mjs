@@ -1,29 +1,13 @@
 import assert from 'node:assert/strict';
-import {
-  copyFileSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
 
 const repositoryRoot = resolve(import.meta.dirname, '..', '..');
-const quarantineScript = join(
-  repositoryRoot,
-  'scripts',
-  'legacy',
-  'quarantine-legacy.ps1'
-);
-const handleHelper = join(
-  repositoryRoot,
-  'scripts',
-  'legacy',
-  'legacy-handle-safety.ps1'
-);
+const quarantineScript = join(repositoryRoot, 'scripts', 'legacy', 'quarantine-legacy.ps1');
+const handleHelper = join(repositoryRoot, 'scripts', 'legacy', 'legacy-handle-safety.ps1');
 
 test('classifies confirmed candidates separately from metadata verification failures', () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-classifier-'));
@@ -106,11 +90,7 @@ $classification | ConvertTo-Json -Depth 4 -Compress
       }
     );
 
-    assert.equal(
-      result.status,
-      0,
-      `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`
-    );
+    assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
     const classification = JSON.parse(result.stdout);
     assert.deepEqual(classification.confirmedCandidates, [101, 104, 105, 106]);
     assert.deepEqual(classification.verificationFailures, [103]);
