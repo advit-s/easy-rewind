@@ -139,28 +139,7 @@ function fixtureLocalScript(fixture, repositoryScript) {
   return localScript;
 }
 
-function runPowerShell(fixture, repositoryScript, args) {
-  const script = fixtureLocalScript(fixture, repositoryScript);
-  const result = spawnSync(
-    'powershell.exe',
-    [
-      '-NoLogo',
-      '-NonInteractive',
-      '-NoProfile',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      script,
-      ...args,
-    ],
-    {
-      cwd: fixture.root,
-      encoding: 'utf8',
-      env: { ...process.env, LOCALAPPDATA: fixture.localAppData },
-      timeout: 10_000,
-    }
-  );
-
+function validatePowerShellResult(result) {
   if (result.error) {
     throw new Error(`PowerShell failed to start: ${result.error.message}\n${diagnostic(result)}`);
   }
@@ -171,6 +150,58 @@ function runPowerShell(fixture, repositoryScript, args) {
     throw new Error(`PowerShell returned no integer status\n${diagnostic(result)}`);
   }
   return result;
+}
+
+function spawnPowerShell(fixture, args) {
+  return validatePowerShellResult(spawnSync(
+    'powershell.exe',
+    args,
+    {
+      cwd: fixture.root,
+      encoding: 'utf8',
+      env: { ...process.env, LOCALAPPDATA: fixture.localAppData },
+      timeout: 10_000,
+    }
+  ));
+}
+
+function runPowerShell(fixture, repositoryScript, args) {
+  const script = fixtureLocalScript(fixture, repositoryScript);
+  return spawnPowerShell(fixture, [
+    '-NoLogo',
+    '-NonInteractive',
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    script,
+    ...args,
+  ]);
+}
+
+function quotePowerShellLiteral(value) {
+  return `'${value.replaceAll("'", "''")}'`;
+}
+
+function runPurgePowerShell(fixture, repositoryScript, manifestPath) {
+  const script = fixtureLocalScript(fixture, repositoryScript);
+  const command = [
+    '&',
+    quotePowerShellLiteral(script),
+    '-ManifestPath',
+    quotePowerShellLiteral(manifestPath),
+    '-Confirm:$false',
+  ].join(' ');
+  const encodedCommand = Buffer.from(command, 'utf16le').toString('base64');
+  return spawnPowerShell(fixture, [
+    '-NoLogo',
+    '-NonInteractive',
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-EncodedCommand',
+    encodedCommand,
+  ]);
 }
 
 function createManifestFixture(fixture, timestamp) {
@@ -297,11 +328,11 @@ test('manifest-bound purge refuses tampered backups and preserves every source',
     'tampered'
   );
 
-  const purge = runPowerShell(fixture, repositoryPurgeScript, [
-    '-ManifestPath',
-    manifest.manifestPath,
-    '-Confirm:$false',
-  ]);
+  const purge = runPurgePowerShell(
+    fixture,
+    repositoryPurgeScript,
+    manifest.manifestPath
+  );
 
   assert.notEqual(purge.status, 0, diagnostic(purge));
   assert.match(purge.stderr, /backup checksum mismatch/i, diagnostic(purge));
@@ -325,11 +356,11 @@ test('manifest-bound purge removes only verified source files', () => {
     ])
   );
 
-  const purge = runPowerShell(fixture, repositoryPurgeScript, [
-    '-ManifestPath',
-    manifest.manifestPath,
-    '-Confirm:$false',
-  ]);
+  const purge = runPurgePowerShell(
+    fixture,
+    repositoryPurgeScript,
+    manifest.manifestPath
+  );
 
   assert.equal(purge.status, 0, diagnostic(purge));
   for (const name of fixture.files.keys()) {
