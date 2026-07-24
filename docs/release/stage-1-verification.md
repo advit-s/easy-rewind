@@ -4,7 +4,7 @@
 | --- | --- |
 | Date | 2026-07-24 |
 | Operator | Codex local containment run; Windows account intentionally not recorded |
-| Repository commit | Containment tooling reviewed at `a646b27eb0449f8fc2d3f43191895c9e39acbc0b` |
+| Repository commit | Containment tooling reviewed at `a646b27eb0449f8fc2d3f43191895c9e39acbc0b`; Task 5 hygiene implementation and review fixes at `33dd03b6fb6554b7696bc5ca7c7b3ecbd2806fa9` |
 | Node | `v24.13.0` observed; Stage 1 runtime selection remains pending |
 | npm | `11.6.2` observed; Stage 1 workspace normalization remains pending |
 
@@ -50,12 +50,12 @@ The manifest was independently validated as UTF-8 without BOM, `sensitive=true`,
 | `backend/data/easy-rewind.db-wal` | - [x] | Manifest-bound purge; absence verified | Live containment aggregate: `4/4` absent |
 | `backend/data/easy-rewind.db-shm` | - [x] | Manifest-bound purge; absence verified | Live containment aggregate: `4/4` absent |
 | `backend/data/settings.json` | - [x] | Manifest-bound purge; absence verified | Live containment aggregate: `4/4` absent |
-| `backend/.env` | - [ ] |  |  |
-| `backend/.git` | - [ ] |  |  |
-| Generated `node_modules` before install | - [ ] |  |  |
-| `tmp_test.js` | - [ ] |  |  |
+| `backend/.env` | - [x] | Exact approved cleanup; existed before and absence verified after | Task 5 exact pre/post path check |
+| `backend/.git` | - [x] | Exact approved cleanup; existed before and absence verified after | Task 5 exact pre/post path check; root `.git` preserved |
+| Generated `node_modules` before install | - [x] | Exact `backend/node_modules` cleanup; existed before and absence verified after | Task 5 exact pre/post path check |
+| `tmp_test.js` | - [x] | Exact approved cleanup; existed before and absence verified after | Task 5 exact pre/post path check |
 
-The purge reported exactly four removals. Post-purge verification found all four manifest-bound originals absent while all five quarantine artifacts remained present; all four backup hashes still matched the protected manifest and the pointer remained valid.
+The manifest-bound purge reported exactly four removals. Post-purge verification found all four manifest-bound originals absent while all five quarantine artifacts remained present; all four backup hashes still matched the protected manifest and the pointer remained valid. The later exact Task 5 cleanup found each of its four approved targets present before removal and absent afterward. It preserved the root `.git`, the quarantine, and the pointer. In the reviewed feature branch, `backend/data/.gitkeep` is the only tracked path below `backend/data`.
 
 ## Workspace evidence
 
@@ -65,7 +65,12 @@ The purge reported exactly four removals. Post-purge verification found all four
 | `npm --version` |  |  |
 | `npm ci` |  |  |
 | `npm run scan:secrets` |  |  |
-| `npm run check:hygiene` |  |  |
+| `npm run check:hygiene` |  | Pending Task 6 root-script normalization; direct checker commands below are verified |
+| `node --test scripts/hygiene/check-repository.test.mjs` | `0` | `63/63` passed, `0` failed, `0` skipped at `33dd03b`; spec and quality reviews passed |
+| `node scripts/hygiene/check-repository.mjs` | `0` | Git-mode repository hygiene check passed |
+| `node scripts/hygiene/check-repository.mjs --filesystem` | `0` | Filesystem-mode repository hygiene check passed without following linked directories |
+| `git check-ignore --quiet -- docs/release/new-evidence.md` | `1` | Expected unignored result; release evidence remains eligible for tracking |
+| `git check-ignore --quiet -- release/artifact.zip` | `0` | Expected ignored result for repository-root release output |
 | `npm run lint` |  |  |
 | `npm run format:check` |  |  |
 | `npm test` |  |  |
@@ -94,11 +99,11 @@ The rewrite is separate. `scheduled` is not `verified`. The Complete checkbox mu
 
 | Field | Value |
 | --- | --- |
-| Tests | Containment suite `21/21` passed immediately before the live retry; complete Stage 1 verification remains pending |
-| Verification evidence | Live quarantine, ACL, manifest, coherent hash/size, purge, survival, and post-purge checks passed |
-| Release blockers in Stage 1 scope | Workspace hygiene/normalization, recovery rehearsal, key revocation, and separate Git-history purge remain unresolved |
+| Tests | Containment suite `21/21` passed immediately before the live retry; hygiene suite `63/63` passed with `0` skipped; complete Stage 1 verification remains pending |
+| Verification evidence | Live quarantine, ACL, manifest, coherent hash/size, purge, survival, post-purge, exact Task 5 cleanup, repository hygiene, and ignore-boundary checks passed; Task 5 spec and quality reviews passed |
+| Release blockers in Stage 1 scope | Workspace normalization, recovery rehearsal, key revocation, and separate Git-history purge remain unresolved |
 | Rollback/recovery | The only preserved quarantine remains intact; recovery rehearsal must use a disposable copy and is pending |
-| Requirement matrix updated | Task 4 containment rows updated below; remaining Stage 1 rows are not promoted |
-| Decision PASS/FAIL | **FAIL** — Task 4 passed, but the Stage 1 exit gate is not yet satisfied |
+| Requirement matrix updated | Task 5 rows S1-05 through S1-07 are verified; S1-08 and later rows are not promoted |
+| Decision PASS/FAIL | **FAIL** — Tasks 4 and 5 passed, but the Stage 1 exit gate is not yet satisfied |
 
 Before a requirement-matrix row can be marked `verified`, record stable report section, repository commit, and artifact references for its evidence and recovery.
