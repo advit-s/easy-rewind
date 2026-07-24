@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import test from 'node:test';
+import { load as parseYaml } from 'js-yaml';
 
 const root = resolve(import.meta.dirname, '..', '..');
 
@@ -9,46 +11,121 @@ function read(relativePath) {
   return readFileSync(join(root, relativePath), 'utf8');
 }
 
+function parsePowerShell(source) {
+  const sourceBase64 = Buffer.from(source, 'utf8').toString('base64');
+  const command = [
+    `$source = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${sourceBase64}'))`,
+    '$tokens = $null',
+    '$errors = $null',
+    '[void][System.Management.Automation.Language.Parser]::ParseInput($source, [ref]$tokens, [ref]$errors)',
+    'if ($errors.Count -gt 0) { $errors | ForEach-Object { [Console]::Error.WriteLine($_.ErrorId) }; exit 1 }',
+  ].join('; ');
+  return spawnSync(
+    'powershell.exe',
+    ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
+    {
+      cwd: root,
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 10_000,
+    }
+  );
+}
+
 test('CI is a least-privilege repository-wide Windows Stage 1 gate', () => {
-  const workflow = read('.github/workflows/ci.yml');
+  const source = read('.github/workflows/ci.yml');
+  const workflow = parseYaml(source);
+  const checkoutSha = '08eba0b27e820071cde6df949e0beb9ba4906955';
+  const setupNodeSha = '49933ea5288caeca8642d1e84afbd3f7d6820020';
+  const expectedNames = [
+    'Check out source',
+    'Set up Node.js',
+    'Verify exact toolchain',
+    'Install exact root dependencies',
+    'Audit production and development dependencies',
+    'Scan tracked source for secrets',
+    'Check repository hygiene',
+    'Run workspace contract tests',
+    'Run containment tests',
+    'Run hygiene tests',
+    'Lint with zero warnings',
+    'Check formatting',
+    'Run backend tests against disposable storage',
+    'Run Stage 1 build validation',
+  ];
+  const expectedRuns = new Map([
+    [
+      'Verify exact toolchain',
+      [
+        "if ((node --version) -ne 'v24.18.0') { throw 'Unexpected Node version' }",
+        "if ((npm --version) -ne '11.6.2') { throw 'Unexpected npm version' }",
+      ].join('\n'),
+    ],
+    ['Install exact root dependencies', 'npm ci'],
+    ['Audit production and development dependencies', 'npm audit --audit-level=high'],
+    ['Scan tracked source for secrets', 'npm run scan:secrets'],
+    ['Check repository hygiene', 'npm run check:hygiene'],
+    ['Run workspace contract tests', 'npm run test:workspace'],
+    ['Run containment tests', 'npm run test:containment'],
+    ['Run hygiene tests', 'npm run test:hygiene'],
+    ['Lint with zero warnings', 'npm run lint'],
+    ['Check formatting', 'npm run format:check'],
+    ['Run backend tests against disposable storage', 'npm run test:backend:legacy-safe'],
+    ['Run Stage 1 build validation', 'npm run build'],
+  ]);
 
-  assert.match(workflow, /^on:\s*$/m);
-  assert.match(workflow, /^\s{2}push:\s*$/m);
-  assert.match(workflow, /^\s{2}pull_request:\s*$/m);
-  assert.match(workflow, /^\s{2}workflow_dispatch:\s*$/m);
-  assert.doesNotMatch(workflow, /^\s+paths(?:-ignore)?:/m);
-  assert.match(workflow, /^permissions:\s*\n\s{2}contents:\s*read\s*$/m);
-  assert.match(workflow, /^\s{4}runs-on:\s*windows-latest\s*$/m);
-  assert.match(workflow, /^\s{4}timeout-minutes:\s*(?:[1-9]|1\d|20)\s*$/m);
-  assert.match(workflow, /uses:\s*actions\/checkout@v4\b/);
-  assert.match(workflow, /uses:\s*actions\/setup-node@v4\b/);
-  assert.match(workflow, /^\s+node-version:\s*24\.18\.0\s*$/m);
-  assert.match(workflow, /^\s+cache:\s*npm\s*$/m);
-  assert.match(workflow, /^\s+cache-dependency-path:\s*package-lock\.json\s*$/m);
-  assert.match(workflow, /\(node --version\).+v24\.18\.0/);
-  assert.match(workflow, /\(npm --version\).+11\.6\.2/);
-  assert.doesNotMatch(workflow, /working-directory:\s*(?:\.\/)?(?:backend|desktop)/);
-  assert.doesNotMatch(workflow, /continue-on-error\s*:/);
-  assert.doesNotMatch(workflow, /\$\{\{\s*secrets\./);
-  assert.doesNotMatch(workflow, /^\s+(?:GEMINI_API_KEY|DATABASE_PATH|ALLOWED_ORIGINS):/m);
+  assert.deepEqual(workflow.on, {
+    push: { branches: ['main', 'master', 'develop'] },
+    pull_request: { branches: ['main', 'master'] },
+    workflow_dispatch: null,
+  });
+  assert.deepEqual(workflow.permissions, { contents: 'read' });
+  assert.deepEqual(Object.keys(workflow.jobs), ['stage-1']);
 
-  for (const command of [
-    'npm ci',
-    'npm audit --audit-level=high',
-    'npm run scan:secrets',
-    'npm run check:hygiene',
-    'npm run test:workspace',
-    'npm run test:containment',
-    'npm run test:hygiene',
-    'npm run lint',
-    'npm run format:check',
-    'npm run test:backend:legacy-safe',
-    'npm run build',
-  ]) {
-    assert.ok(workflow.includes(command), `missing CI gate: ${command}`);
+  const job = workflow.jobs['stage-1'];
+  assert.equal(job.name, 'Stage 1 hygiene and workspace');
+  assert.equal(job['runs-on'], 'windows-latest');
+  assert.equal(job['timeout-minutes'], 20);
+  assert.equal(job.defaults, undefined);
+  assert.equal(job.strategy, undefined);
+  assert.deepEqual(
+    job.steps.map(step => step.name),
+    expectedNames
+  );
+
+  const checkout = job.steps[0];
+  assert.deepEqual(checkout, {
+    name: 'Check out source',
+    uses: `actions/checkout@${checkoutSha}`,
+    with: {
+      'fetch-depth': 1,
+      'persist-credentials': false,
+    },
+  });
+
+  const setupNode = job.steps[1];
+  assert.deepEqual(setupNode, {
+    name: 'Set up Node.js',
+    uses: `actions/setup-node@${setupNodeSha}`,
+    with: {
+      'node-version': '24.18.0',
+      cache: 'npm',
+      'cache-dependency-path': 'package-lock.json',
+    },
+  });
+
+  for (const step of job.steps.slice(2)) {
+    assert.equal(step.run.trim(), expectedRuns.get(step.name));
+    assert.deepEqual(
+      Object.keys(step).sort(),
+      step.name === 'Verify exact toolchain' ? ['name', 'run', 'shell'] : ['name', 'run']
+    );
   }
-
-  assert.match(workflow, /Official GitHub-maintained action/i);
+  assert.equal(job.steps[2].shell, 'pwsh');
+  assert.doesNotMatch(source, /\$\{\{\s*secrets\./);
+  assert.match(source, /Official GitHub-maintained action/i);
+  assert.match(source, /checkout v4\.3\.0/i);
+  assert.match(source, /setup-node v4\.4\.0/i);
 });
 
 test('security policy treats local artifacts as sensitive and revocation as separate', () => {
@@ -58,7 +135,10 @@ test('security policy treats local artifacts as sensitive and revocation as sepa
     /runtime databases/i,
     /WAL\/SHM/i,
     /sensitive personal data/i,
-    /report.+privately/is,
+    /Report a vulnerability/i,
+    /private\s+vulnerability reporting/i,
+    /existing private contact channel/i,
+    /do not open a\s+public issue/i,
     /must be revoked/i,
     /rewriting Git history does not revoke/i,
     /%LOCALAPPDATA%\\easy-rewind\\legacy-backup\\/i,
@@ -98,18 +178,48 @@ test('history remediation is a separate post-gate coordinated external action', 
   assert.match(guide, /only after (?:the )?containment and workspace gates pass.+collaborator.+freeze/is);
   assert.match(guide, /separate\s+Stage 1 external action.+required before.+final PASS/is);
   assert.match(guide, /fresh mirror clone/i);
-  assert.match(guide, /offline\s+mirror backup/i);
-  assert.match(guide, /git filter-repo/);
+  assert.match(guide, /repository-external/i);
+  assert.match(guide, /non-synced/i);
+  assert.match(
+    guide,
+    /\$RemoteUri\.Host\s+-eq\s+'github\.com'.+\$RemoteUri\.AbsolutePath\s+-eq\s+'\/OWNER\/REPOSITORY\.git'.+throw/is
+  );
+  assert.match(guide, /\$BackupMirror/);
+  assert.match(guide, /\$RewriteMirror/);
+  assert.match(guide, /SetAccessRuleProtection/);
+  assert.match(guide, /WindowsIdentity/);
+  assert.match(guide, /Set-Acl/);
+  assert.match(guide, /show-ref/);
+  assert.match(guide, /Get-FileHash/);
+  assert.match(guide, /git\s+-C\s+\$RewriteMirror\s+filter-repo/);
   assert.match(guide, /replace-text/);
-  assert.match(guide, /scan all rewritten refs/i);
-  assert.doesNotMatch(guide, /^\s*git push --force --mirror\s*$/m);
-  assert.match(guide, /^\s*git push --force --mirror\s+<REMOTE-URL>\s*$/m);
+  assert.match(guide, /git.+log.+--all.+--name-only/is);
+  assert.match(guide, /gitleaks.+--redact.+--log-opts.+--all/is);
+  assert.match(guide, /git.+-C.+\$RewriteMirror.+push.+--force.+--mirror.+\$RemoteUrl/is);
+  assert.match(guide, /\$VerificationMirror/);
+  assert.match(guide, /git.+clone.+--mirror.+\$RemoteUrl.+\$VerificationMirror/is);
+  assert.match(guide, /git.+-C.+\$BackupMirror.+push.+--force.+--mirror.+\$RemoteUrl/is);
+  assert.match(guide, /rollback/i);
+  assert.doesNotMatch(guide, /<REMOTE-URL>/);
+  assert.doesNotMatch(guide, /Write-(?:Host|Output).*(?:secret|credential)/i);
   assert.match(guide, /discard old clones and re-clone/i);
   assert.match(guide, /forks, caches, release\s+artifacts, pull-request refs, and external mirrors/i);
-  assert.match(guide, /key must still be revoked/i);
+  assert.match(guide, /key\s+must still be revoked/i);
 
   for (const affectedPath of affectedPaths) {
     assert.ok(guide.includes(affectedPath), `missing affected path: ${affectedPath}`);
+  }
+});
+
+test('every PowerShell history-remediation block parses without errors', () => {
+  const guide = read('docs/security/git-history-remediation.md');
+  const blocks = [...guide.matchAll(/```powershell\s*\r?\n([\s\S]*?)```/gi)].map(match => match[1]);
+
+  assert.ok(blocks.length >= 4, 'expected preparation, rewrite, push, and rollback blocks');
+  for (const [index, block] of blocks.entries()) {
+    const result = parsePowerShell(block);
+    assert.equal(result.error, undefined, `PowerShell parser failed to start for block ${index + 1}`);
+    assert.equal(result.status, 0, `PowerShell block ${index + 1} has parse errors: ${result.stderr.trim()}`);
   }
 });
 
@@ -149,4 +259,5 @@ test('the workspace verification suite runs the Task 7 contract test', () => {
   const repository = JSON.parse(read('package.json'));
 
   assert.match(repository.scripts['test:workspace'], /scripts\/validation\/stage1-ci-security\.test\.mjs/);
+  assert.equal(repository.devDependencies['js-yaml'], '4.3.0');
 });

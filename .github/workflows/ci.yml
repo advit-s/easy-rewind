@@ -18,14 +18,15 @@ jobs:
 
     steps:
       - name: Check out source
-        # Official GitHub-maintained action; v4 is approved by the Stage 1 plan.
-        uses: actions/checkout@v4
+        # Official GitHub-maintained action: checkout v4.3.0, pinned to its immutable release SHA.
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
         with:
-          fetch-depth: 0
+          fetch-depth: 1
+          persist-credentials: false
 
       - name: Set up Node.js
-        # Official GitHub-maintained action; v4 is approved by the Stage 1 plan.
-        uses: actions/setup-node@v4
+        # Official GitHub-maintained action: setup-node v4.4.0, pinned to its immutable release SHA.
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
           node-version: 24.18.0
           cache: npm
