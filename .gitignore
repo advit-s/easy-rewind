@@ -1,42 +1,83 @@
-# Dependencies
+# Dependencies and package-manager caches
 node_modules/
-.pnp
-.pnp.js
+.npm/
+.npm-cache/
+.yarn/
+.pnpm-store/
 
-# Environment files (NEVER commit these — they contain API keys)
+# Credentials and local configuration
 .env
-.env.local
-.env.*.local
+.env.*
+!.env.example
+**/.env
+**/.env.*
+!**/.env.example
+**/settings.json
+**/secrets.json
+**/credentials.json
 
-# Logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-logs/
+# Runtime databases and SQLite companions
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+**/data/*
+!**/data/.gitkeep
+
+# Sensitive quarantine and migration working copies
+legacy-backup/
+**/legacy-backup/
+quarantine/
+**/quarantine/
+migration-work/
+**/migration-work/
+
+# Logs, diagnostics, exports, coverage, and temporary test data
 *.log
+logs/
+diagnostics/
+exports/
+coverage/
+.nyc_output/
+test-results/
+playwright-report/
+tmp/
+temp/
+*.tmp
 
-# OS files
+# Build and release outputs
+dist/
+build/
+out/
+release/
+artifacts/
+*.zip
+*.7z
+*.tar
+*.tar.gz
+*.exe
+*.msi
+*.appx
+*.blockmap
+*.node
+
+# Native build intermediates
+**/build/Release/
+**/prebuilds/
+*.obj
+*.pdb
+
+# Nested repositories
+**/.git/
+!.git/
+
+# Operating-system and editor files
 .DS_Store
 Thumbs.db
 desktop.ini
-
-# Editor files
 .vscode/
 .idea/
 *.swp
 *.swo
-
-# Build outputs
-dist/
-build/
-
-# Database (auto-created by SQLite)
-*.db
-*.db-shm
-*.db-wal
-
-# Runtime settings (contains API keys)
-backend/data/settings.json
-
-# Extension icons (generated files)
-# extension/icons/*.png

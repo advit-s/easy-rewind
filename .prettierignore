@@ -1,0 +1,14 @@
+node_modules
+dist
+build
+out
+release
+artifacts
+coverage
+logs
+exports
+legacy-backup
+quarantine
+migration-work
+backend/data
+package-lock.json
