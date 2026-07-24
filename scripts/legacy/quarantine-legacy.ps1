@@ -125,6 +125,63 @@ function Test-CommandLineReferencesSourceRoot {
   return $false
 }
 
+function Get-EasyRewindProcessClassification {
+  param(
+    [Parameter(Mandatory=$true)][object[]]$Processes,
+    [Parameter(Mandatory=$true)][AllowEmptyCollection()][int[]]$ListeningPids,
+    [Parameter(Mandatory=$true)][string]$ResolvedSourceRoot
+  )
+
+  $confirmedCandidates = [System.Collections.Generic.HashSet[int]]::new()
+  $verificationFailures = [System.Collections.Generic.HashSet[int]]::new()
+  foreach ($process in $Processes) {
+    $name = [string]$process.Name
+    $processId = [int]$process.ProcessId
+    $executablePath = [string]$process.ExecutablePath
+    $commandLine = [string]$process.CommandLine
+    $isProductExecutable = $name -match '^(?i:easy[ -]?rewind)(?:\.exe)?$'
+    if ($isProductExecutable) {
+      $null = $confirmedCandidates.Add($processId)
+      continue
+    }
+
+    $isGenericRuntime = $name -match '^(?i:node|electron)(?:\.exe)?$'
+    if (-not $isGenericRuntime) {
+      continue
+    }
+
+    $hasExecutableMetadata = -not [string]::IsNullOrWhiteSpace($executablePath)
+    $hasCommandLineMetadata = -not [string]::IsNullOrWhiteSpace($commandLine)
+    $referencesSource = (
+      ($hasExecutableMetadata -and
+        (Test-ExecutableReferencesSourceRoot `
+          -ExecutablePath $executablePath `
+          -ResolvedSourceRoot $ResolvedSourceRoot)) -or
+      ($hasCommandLineMetadata -and
+        (Test-CommandLineReferencesSourceRoot `
+          -CommandLine $commandLine `
+          -ResolvedSourceRoot $ResolvedSourceRoot))
+    )
+    $isPortServer = (
+      $name -match '^(?i:node)(?:\.exe)?$' -and
+      $hasCommandLineMetadata -and
+      $commandLine -match '(?i)(?:^|[\\/"\s])server\.js(?:["\s]|$)' -and
+      $ListeningPids -contains $processId
+    )
+
+    if ($referencesSource -or $isPortServer) {
+      $null = $confirmedCandidates.Add($processId)
+    } elseif (-not $hasExecutableMetadata -or -not $hasCommandLineMetadata) {
+      $null = $verificationFailures.Add($processId)
+    }
+  }
+
+  return [pscustomobject][ordered]@{
+    confirmedCandidates = [int[]]@($confirmedCandidates | Sort-Object)
+    verificationFailures = [int[]]@($verificationFailures | Sort-Object)
+  }
+}
+
 function Assert-NoEasyRewindProcess {
   param([Parameter(Mandatory=$true)][string]$ResolvedSourceRoot)
 
@@ -166,7 +223,6 @@ function Assert-NoEasyRewindProcess {
     $listeningPids = @($listeningPids | Select-Object -Unique)
   }
 
-  $matchingPids = [System.Collections.Generic.HashSet[int]]::new()
   $processes = @()
   try {
     $processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
@@ -316,35 +372,19 @@ namespace EasyRewind {
       }
     )
   }
-  foreach ($process in $processes) {
-    $name = [string]$process.Name
-    $executablePath = [string]$process.ExecutablePath
-    $commandLine = [string]$process.CommandLine
-    $isProductExecutable = $name -match '^(?i:easy[ -]?rewind)(?:\.exe)?$'
-    $isGenericRuntime = $name -match '^(?i:node|electron)(?:\.exe)?$'
-    $referencesSource = (
-      (Test-ExecutableReferencesSourceRoot `
-        -ExecutablePath $executablePath `
-        -ResolvedSourceRoot $ResolvedSourceRoot) -or
-      (Test-CommandLineReferencesSourceRoot `
-        -CommandLine $commandLine `
-        -ResolvedSourceRoot $ResolvedSourceRoot)
-    )
-    $isPortServer = (
-      $name -match '^(?i:node)(?:\.exe)?$' -and
-      $commandLine -match '(?i)(?:^|[\\/"\s])server\.js(?:["\s]|$)' -and
-      $listeningPids -contains [int]$process.ProcessId
-    )
-
-    if ($isProductExecutable -or
-        ($isGenericRuntime -and $referencesSource) -or
-        $isPortServer) {
-      $null = $matchingPids.Add([int]$process.ProcessId)
-    }
+  if ($processes.Count -eq 0) {
+    throw 'Unable to enumerate Windows processes.'
   }
-
-  if ($matchingPids.Count -gt 0) {
-    $pids = @($matchingPids) | Sort-Object
+  $classification = Get-EasyRewindProcessClassification `
+    -Processes $processes `
+    -ListeningPids $listeningPids `
+    -ResolvedSourceRoot $ResolvedSourceRoot
+  if ($classification.verificationFailures.Count -gt 0) {
+    $pids = @($classification.verificationFailures)
+    throw "Unable to verify Node/Electron process metadata for PIDs: $($pids -join ', ')"
+  }
+  if ($classification.confirmedCandidates.Count -gt 0) {
+    $pids = @($classification.confirmedCandidates)
     throw "Easy Rewind processes are still running. PIDs: $($pids -join ', ')"
   }
 }
