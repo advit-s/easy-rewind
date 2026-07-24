@@ -386,6 +386,10 @@ try {
     'four exact manifest-verified legacy source files under ' +
     $canonicalSourceRoot
   )
+  # This is intentionally one set-level decision: per-file confirmation can
+  # authorize only part of the coherent SQLite set. Deletion is intentionally
+  # committed through the already-verified handles below; reopening paths could
+  # delete replacement bytes that were never matched to the backup manifest.
   if (-not $PSCmdlet.ShouldProcess(
       $decisionTarget,
       'Purge the complete verified legacy source set'

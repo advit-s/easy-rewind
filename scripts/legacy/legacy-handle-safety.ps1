@@ -18,6 +18,7 @@ namespace EasyRewind {
     internal const uint Delete = 0x00010000;
     internal const uint WriteDac = 0x00040000;
     internal const uint WriteOwner = 0x00080000;
+    internal const uint Synchronize = 0x00100000;
     internal const uint FileReadAttributes = 0x00000080;
     internal const uint ShareRead = 0x00000001;
     internal const uint ShareWrite = 0x00000002;
@@ -31,6 +32,11 @@ namespace EasyRewind {
     internal const int FileDispositionInfo = 4;
     internal const int ErrorSharingViolation = 32;
     internal const int ErrorLockViolation = 33;
+    internal const int ErrorDirNotEmpty = 145;
+    internal const uint NtFileCreate = 2;
+    internal const uint NtFileDirectoryFile = 0x00000001;
+    internal const uint NtFileSynchronousIoNonAlert = 0x00000020;
+    internal const uint ObjectCaseInsensitive = 0x00000040;
     internal const uint DaclSecurityInformation = 0x00000004;
     internal const uint ProtectedDaclSecurityInformation = 0x80000000;
 
@@ -60,6 +66,29 @@ namespace EasyRewind {
       internal bool DeleteFile;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct UnicodeString {
+      internal ushort Length;
+      internal ushort MaximumLength;
+      internal IntPtr Buffer;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct ObjectAttributes {
+      internal int Length;
+      internal IntPtr RootDirectory;
+      internal IntPtr ObjectName;
+      internal uint Attributes;
+      internal IntPtr SecurityDescriptor;
+      internal IntPtr SecurityQualityOfService;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct IoStatusBlock {
+      internal IntPtr Status;
+      internal UIntPtr Information;
+    }
+
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     internal static extern SafeFileHandle CreateFile(
       string fileName,
@@ -87,12 +116,23 @@ namespace EasyRewind {
       uint bufferSize
     );
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    [return: MarshalAs(UnmanagedType.Bool)]
-    internal static extern bool CreateDirectory(
-      string path,
-      IntPtr securityAttributes
+    [DllImport("ntdll.dll")]
+    internal static extern int NtCreateFile(
+      out SafeFileHandle fileHandle,
+      uint desiredAccess,
+      ref ObjectAttributes objectAttributes,
+      out IoStatusBlock ioStatusBlock,
+      IntPtr allocationSize,
+      uint fileAttributes,
+      uint shareAccess,
+      uint createDisposition,
+      uint createOptions,
+      IntPtr eaBuffer,
+      uint eaLength
     );
+
+    [DllImport("ntdll.dll")]
+    internal static extern uint RtlNtStatusToDosError(int status);
 
     [DllImport("advapi32.dll", SetLastError = true)]
     [return: MarshalAs(UnmanagedType.Bool)]
@@ -113,6 +153,28 @@ namespace EasyRewind {
         throw new Win32Exception(
           Marshal.GetLastWin32Error(),
           "Unable to apply exact security descriptor through held handle."
+        );
+      }
+    }
+
+    internal static void UpdateDeleteDisposition(
+      SafeFileHandle handle,
+      string path,
+      bool deletePending
+    ) {
+      FileDispositionInformation information =
+        new FileDispositionInformation();
+      information.DeleteFile = deletePending;
+      uint size = (uint)Marshal.SizeOf(typeof(FileDispositionInformation));
+      if (!SetFileInformationByHandle(
+          handle,
+          FileDispositionInfo,
+          ref information,
+          size
+        )) {
+        throw new Win32Exception(
+          Marshal.GetLastWin32Error(),
+          "Unable to update delete disposition: " + path
         );
       }
     }
@@ -355,23 +417,7 @@ namespace EasyRewind {
 
     internal void SetDeletePending(bool deletePending) {
       ThrowIfDisposed();
-      NativeMethods.FileDispositionInformation information =
-        new NativeMethods.FileDispositionInformation();
-      information.DeleteFile = deletePending;
-      uint size = (uint)Marshal.SizeOf(
-        typeof(NativeMethods.FileDispositionInformation)
-      );
-      if (!NativeMethods.SetFileInformationByHandle(
-          handle,
-          NativeMethods.FileDispositionInfo,
-          ref information,
-          size
-        )) {
-        throw new Win32Exception(
-          Marshal.GetLastWin32Error(),
-          "Unable to update delete disposition: " + Path
-        );
-      }
+      NativeMethods.UpdateDeleteDisposition(handle, Path, deletePending);
     }
 
     private void ThrowIfDisposed() {
@@ -433,59 +479,154 @@ namespace EasyRewind {
       return new NativeDirectoryHandle(fullPath, safeHandle);
     }
 
-    public static NativeDirectoryHandle CreateNew(string path) {
-      string fullPath = System.IO.Path.GetFullPath(path);
-      if (!NativeMethods.CreateDirectory(fullPath, IntPtr.Zero)) {
-        throw new Win32Exception(
-          Marshal.GetLastWin32Error(),
-          "Unable to create exact new directory: " + fullPath
+    public static NativeDirectoryHandle CreateNew(
+      NativeDirectoryHandle parent,
+      string leafName
+    ) {
+      return CreateNewCore(parent, leafName, false);
+    }
+
+    public static NativeDirectoryHandle CreateNewWithInjectedFailure(
+      NativeDirectoryHandle parent,
+      string leafName
+    ) {
+      return CreateNewCore(parent, leafName, true);
+    }
+
+    private static NativeDirectoryHandle CreateNewCore(
+      NativeDirectoryHandle parent,
+      string leafName,
+      bool injectPostCreateFailure
+    ) {
+      if (parent == null) {
+        throw new ArgumentNullException("parent");
+      }
+      parent.ThrowIfDisposed();
+      if (String.IsNullOrWhiteSpace(leafName) ||
+          leafName == "." ||
+          leafName == ".." ||
+          leafName.IndexOf('\\') >= 0 ||
+          leafName.IndexOf('/') >= 0 ||
+          leafName.IndexOf(':') >= 0) {
+        throw new ArgumentException(
+          "New directory name must be one direct leaf.",
+          "leafName"
         );
       }
+      string fullPath = System.IO.Path.Combine(parent.Path, leafName);
+      if (leafName.Length > (UInt16.MaxValue / 2) - 1) {
+        throw new PathTooLongException("New directory leaf is too long.");
+      }
+
+      IntPtr nameBuffer = Marshal.StringToHGlobalUni(leafName);
+      IntPtr unicodePointer = IntPtr.Zero;
+      SafeFileHandle safeHandle = null;
       try {
-        SafeFileHandle safeHandle = NativeMethods.CreateFile(
-          fullPath,
-          NativeMethods.FileReadAttributes |
-            NativeMethods.WriteDac,
-          NativeMethods.ShareRead,
-          IntPtr.Zero,
-          NativeMethods.OpenExisting,
-          NativeMethods.FlagBackupSemantics |
-            NativeMethods.FlagOpenReparsePoint,
-          IntPtr.Zero
+        NativeMethods.UnicodeString unicodeName =
+          new NativeMethods.UnicodeString();
+        unicodeName.Length = (ushort)(leafName.Length * 2);
+        unicodeName.MaximumLength = (ushort)((leafName.Length + 1) * 2);
+        unicodeName.Buffer = nameBuffer;
+        unicodePointer = Marshal.AllocHGlobal(
+          Marshal.SizeOf(typeof(NativeMethods.UnicodeString))
         );
-        if (safeHandle.IsInvalid) {
-          int error = Marshal.GetLastWin32Error();
-          safeHandle.Dispose();
+        Marshal.StructureToPtr(unicodeName, unicodePointer, false);
+
+        NativeMethods.ObjectAttributes attributes =
+          new NativeMethods.ObjectAttributes();
+        attributes.Length = Marshal.SizeOf(
+          typeof(NativeMethods.ObjectAttributes)
+        );
+        attributes.RootDirectory = parent.handle.DangerousGetHandle();
+        attributes.ObjectName = unicodePointer;
+        attributes.Attributes = NativeMethods.ObjectCaseInsensitive;
+
+        NativeMethods.IoStatusBlock ioStatusBlock;
+        int status = NativeMethods.NtCreateFile(
+          out safeHandle,
+          NativeMethods.FileReadAttributes |
+            NativeMethods.Delete |
+            NativeMethods.Synchronize |
+            NativeMethods.WriteDac,
+          ref attributes,
+          out ioStatusBlock,
+          IntPtr.Zero,
+          0,
+          NativeMethods.ShareRead,
+          NativeMethods.NtFileCreate,
+          NativeMethods.NtFileDirectoryFile |
+            NativeMethods.NtFileSynchronousIoNonAlert |
+            NativeMethods.FlagOpenReparsePoint,
+          IntPtr.Zero,
+          0
+        );
+        if (status < 0 || safeHandle == null || safeHandle.IsInvalid) {
+          int error = (int)NativeMethods.RtlNtStatusToDosError(status);
+          if (safeHandle != null) {
+            safeHandle.Dispose();
+          }
           throw new Win32Exception(
             error,
-            "Unable to lock exact new directory: " + fullPath
+            "Unable to atomically create directory through parent handle: " +
+              fullPath
           );
         }
+
         NativeMethods.ByHandleFileInformation information;
         if (!NativeMethods.GetFileInformationByHandle(safeHandle, out information) ||
             (information.FileAttributes & NativeMethods.AttributeDirectory) == 0 ||
             (information.FileAttributes & NativeMethods.AttributeReparsePoint) != 0) {
           int error = Marshal.GetLastWin32Error();
-          safeHandle.Dispose();
           throw new Win32Exception(
             error,
             "New directory identity validation failed: " + fullPath
           );
         }
+        if (injectPostCreateFailure) {
+          throw new IOException(
+            "Injected atomic directory creation failure."
+          );
+        }
         return new NativeDirectoryHandle(fullPath, safeHandle);
       } catch {
-        // The caller cannot safely clean up a directory whose authoritative
-        // handle was never obtained. Leave the empty create-new artifact
-        // fail-closed rather than re-resolving and deleting a swapped path.
+        if (safeHandle != null && !safeHandle.IsInvalid) {
+          try {
+            NativeMethods.UpdateDeleteDisposition(safeHandle, fullPath, true);
+          } finally {
+            safeHandle.Dispose();
+          }
+        }
         throw;
+      } finally {
+        if (unicodePointer != IntPtr.Zero) {
+          Marshal.FreeHGlobal(unicodePointer);
+        }
+        Marshal.FreeHGlobal(nameBuffer);
       }
     }
 
     public void ApplySecurityDescriptor(byte[] securityDescriptor) {
+      ThrowIfDisposed();
+      NativeMethods.ApplyPrivateSecurity(handle, securityDescriptor);
+    }
+
+    public bool TrySetDeletePending() {
+      ThrowIfDisposed();
+      try {
+        NativeMethods.UpdateDeleteDisposition(handle, Path, true);
+        return true;
+      } catch (Win32Exception exception) {
+        if (exception.NativeErrorCode == NativeMethods.ErrorDirNotEmpty) {
+          return false;
+        }
+        throw;
+      }
+    }
+
+    private void ThrowIfDisposed() {
       if (disposed) {
         throw new ObjectDisposedException("NativeDirectoryHandle");
       }
-      NativeMethods.ApplyPrivateSecurity(handle, securityDescriptor);
     }
 
     public void Dispose() {

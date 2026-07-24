@@ -198,6 +198,19 @@ function runPowerShell(fixture, repositoryScript, args) {
   ]);
 }
 
+function runLocalPowerShell(fixture, script, args) {
+  return spawnPowerShell(fixture, [
+    '-NoLogo',
+    '-NonInteractive',
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    script,
+    ...args,
+  ]);
+}
+
 function quotePowerShellLiteral(value) {
   return `'${value.replaceAll("'", "''")}'`;
 }
@@ -475,6 +488,69 @@ test('quarantine fails closed if any required legacy file is absent', () => {
     assert.match(result.stderr, /required legacy file is missing/i, `${name}: ${diagnostic(result)}`);
     assert.equal(existsSync(fixture.quarantineRoot), false, `${name} created a destination`);
   }
+});
+
+test('quarantine failure cleanup deletes only held invocation-created objects', () => {
+  const fixture = newFixture();
+  const timestamp = '20260724T120000023Z';
+  const destination = join(fixture.quarantineRoot, timestamp);
+  const sentinelPath = join(destination, 'injected-untracked.txt');
+  const localScript = fixtureLocalScript(
+    fixture,
+    repositoryQuarantineScript
+  );
+  const scriptSource = readFileSync(localScript, 'utf8');
+  const injectionMarker = '  $manifest = [ordered]@{';
+  assert.equal(
+    scriptSource.includes(injectionMarker),
+    true,
+    'quarantine manifest marker must remain injectable'
+  );
+  writeFileSync(
+    localScript,
+    scriptSource.replace(
+      injectionMarker,
+      [
+        "  [System.IO.File]::WriteAllText((Join-Path $destination 'injected-untracked.txt'), 'keep')",
+        "  throw 'Injected quarantine failure after backup creation.'",
+        injectionMarker,
+      ].join('\n')
+    )
+  );
+
+  const result = runLocalPowerShell(fixture, localScript, [
+    '-SourceRoot',
+    fixture.sourceRoot,
+    '-QuarantineRoot',
+    fixture.quarantineRoot,
+    '-Timestamp',
+    timestamp,
+  ]);
+
+  assert.notEqual(result.status, 0, diagnostic(result));
+  assert.match(result.stderr, /Injected quarantine failure/i, diagnostic(result));
+  assert.equal(readFileSync(sentinelPath, 'utf8'), 'keep');
+  assert.equal(existsSync(destination), true);
+  for (const name of requiredNames) {
+    assert.equal(
+      existsSync(join(destination, name)),
+      false,
+      `cleanup left invocation-created ${name}`
+    );
+  }
+  assert.equal(existsSync(join(destination, 'manifest.json')), false);
+
+  const productionSource = readFileSync(repositoryQuarantineScript, 'utf8');
+  assert.doesNotMatch(
+    productionSource,
+    /function Remove-TrackedQuarantineArtifacts|Remove-Item/,
+    'failure cleanup must not close authoritative handles and reopen paths'
+  );
+  assert.match(
+    productionSource,
+    /MarkDeletePendingAll[\s\S]*?Close-HandleCollection -Handles \$backupHandles[\s\S]*?\$destinationHandle\.(?:Try)?SetDeletePending/,
+    'created-file dispositions must precede handle close and directory disposition'
+  );
 });
 
 test('manifest-bound purge refuses tampered backups and preserves every source', () => {

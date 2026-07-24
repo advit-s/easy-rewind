@@ -121,3 +121,68 @@ $afterCommit = @($paths | ForEach-Object { Test-Path -LiteralPath $_ })
     rmSync(fixtureRoot, { recursive: true, force: true });
   }
 });
+
+test('atomic directory creation leaves no directory after post-create failure', () => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-directory-create-'));
+  try {
+    const helperPath = join(fixtureRoot, basename(repositoryHelper));
+    copyFileSync(repositoryHelper, helperPath);
+    const createdPath = join(fixtureRoot, 'must-not-remain');
+    const driverPath = join(fixtureRoot, 'directory-create-driver.ps1');
+    writeFileSync(
+      driverPath,
+      `
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+. '${helperPath.replaceAll("'", "''")}'
+$parent = [EasyRewind.NativeDirectoryHandle]::OpenExisting('${fixtureRoot.replaceAll("'", "''")}')
+try {
+  try {
+    $created = [EasyRewind.NativeDirectoryHandle]::CreateNewWithInjectedFailure(
+      $parent,
+      'must-not-remain'
+    )
+    $created.Dispose()
+    throw 'Injected atomic directory creation failure did not occur.'
+  } catch {
+    if ($_.Exception.Message -notmatch 'Injected atomic directory creation failure') {
+      throw
+    }
+  }
+} finally {
+  $parent.Dispose()
+}
+[pscustomobject]@{
+  existsAfterFailure = Test-Path -LiteralPath '${createdPath.replaceAll("'", "''")}'
+} | ConvertTo-Json -Compress
+`
+    );
+
+    const result = spawnSync(
+      'powershell.exe',
+      [
+        '-NoLogo',
+        '-NonInteractive',
+        '-NoProfile',
+        '-ExecutionPolicy',
+        'Bypass',
+        '-File',
+        driverPath,
+      ],
+      {
+        cwd: fixtureRoot,
+        encoding: 'utf8',
+        timeout: 10_000,
+      }
+    );
+    assert.equal(
+      result.status,
+      0,
+      `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`
+    );
+    assert.deepEqual(JSON.parse(result.stdout), { existsAfterFailure: false });
+    assert.equal(existsSync(createdPath), false);
+  } finally {
+    rmSync(fixtureRoot, { recursive: true, force: true });
+  }
+});

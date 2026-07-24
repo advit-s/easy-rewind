@@ -539,51 +539,6 @@ function Close-HandleCollection {
   }
 }
 
-function Remove-TrackedQuarantineArtifacts {
-  param(
-    [Parameter(Mandatory=$true)][string]$Destination,
-    [Parameter(Mandatory=$true)][string]$ExpectedRoot,
-    [Parameter(Mandatory=$true)][string]$ExpectedTimestamp,
-    [string[]]$CreatedBackupPaths = @(),
-    [string]$ManifestPath,
-    [bool]$ManifestCreated
-  )
-
-  $cleanupTarget = Get-CanonicalPath -Path $Destination
-  $cleanupParent = [System.IO.Directory]::GetParent($cleanupTarget).FullName
-  if (-not (Test-PathEqual -Left $cleanupTarget -Right $Destination) -or
-      -not (Test-PathEqual -Left $cleanupParent -Right $ExpectedRoot) -or
-      [System.IO.Path]::GetFileName($cleanupTarget) -cne $ExpectedTimestamp) {
-    throw 'Refusing to clean up an unexpected quarantine path.'
-  }
-  foreach ($backupPath in $CreatedBackupPaths) {
-    $resolvedBackup = Get-CanonicalPath -Path $backupPath
-    if (-not (Test-PathEqual `
-        -Left ([System.IO.Directory]::GetParent($resolvedBackup).FullName) `
-        -Right $cleanupTarget)) {
-      throw 'Refusing to clean up an unexpected backup path.'
-    }
-    if (Test-Path -LiteralPath $resolvedBackup -PathType Leaf) {
-      Remove-Item -LiteralPath $resolvedBackup -Force
-    }
-  }
-  if ($ManifestCreated -and -not [string]::IsNullOrWhiteSpace($ManifestPath)) {
-    $resolvedManifest = Get-CanonicalPath -Path $ManifestPath
-    if (-not (Test-PathEqual `
-        -Left ([System.IO.Directory]::GetParent($resolvedManifest).FullName) `
-        -Right $cleanupTarget) -or
-        [System.IO.Path]::GetFileName($resolvedManifest) -cne 'manifest.json') {
-      throw 'Refusing to clean up an unexpected manifest path.'
-    }
-    if (Test-Path -LiteralPath $resolvedManifest -PathType Leaf) {
-      Remove-Item -LiteralPath $resolvedManifest -Force
-    }
-  }
-  if (Test-Path -LiteralPath $cleanupTarget) {
-    Remove-Item -LiteralPath $cleanupTarget -Force
-  }
-}
-
 function Assert-StableSnapshot {
   param(
     [Parameter(Mandatory=$true)]
@@ -678,10 +633,9 @@ $sourceInitial = @{}
 $backupInitial = @{}
 $createdBackupPaths = @()
 $manifestPath = Get-CanonicalPath -Path (Join-Path $destination 'manifest.json')
-$manifestCreated = $false
-$destinationCreated = $false
 $manifestJson = $null
 $failure = $null
+$cleanupFailure = $null
 
 try {
   # Process metadata is supplemental. These raw handles are the authoritative
@@ -711,9 +665,16 @@ try {
   } else {
     $null = [System.IO.Directory]::CreateDirectory($resolvedQuarantineRoot)
   }
-  $quarantineRootHandles = Open-LockedDirectoryChain -Root $resolvedQuarantineRoot
-  $destinationHandle = [EasyRewind.NativeDirectoryHandle]::CreateNew($destination)
-  $destinationCreated = $true
+  $quarantineRootHandles = @(
+    Open-LockedDirectoryChain -Root $resolvedQuarantineRoot
+  )
+  $quarantineRootHandle = $quarantineRootHandles[
+    $quarantineRootHandles.Count - 1
+  ]
+  $destinationHandle = [EasyRewind.NativeDirectoryHandle]::CreateNew(
+    $quarantineRootHandle,
+    $Timestamp
+  )
   Set-AndVerifyPrivateDirectoryAcl `
     -Path $destination `
     -NativeHandle $destinationHandle
@@ -767,7 +728,6 @@ try {
   $manifestJson = $manifest | ConvertTo-Json -Depth 6 -Compress
   $utf8WithoutBom = New-Object System.Text.UTF8Encoding($false)
   $manifestHandle = [EasyRewind.NativeHandleFile]::CreateNew($manifestPath)
-  $manifestCreated = $true
   $manifestHandle.WriteAllBytes(
     $utf8WithoutBom.GetBytes($manifestJson + [System.Environment]::NewLine)
   )
@@ -807,6 +767,48 @@ try {
 } catch {
   $failure = $_
 } finally {
+  if ($null -ne $failure -and $null -ne $destinationHandle) {
+    $createdFileHandles = [System.Collections.Generic.List[
+      EasyRewind.NativeHandleFile
+    ]]::new()
+    foreach ($backupHandle in $backupHandles) {
+      $createdFileHandles.Add($backupHandle)
+    }
+    if ($null -ne $manifestHandle) {
+      $createdFileHandles.Add($manifestHandle)
+    }
+
+    try {
+      # Decide deletion against every exact create-new file handle as one
+      # transaction. The helper rolls all earlier dispositions back if any
+      # later disposition fails.
+      [EasyRewind.NativeHandleOperations]::MarkDeletePendingAll(
+        $createdFileHandles.ToArray(),
+        -1
+      )
+    } catch {
+      $cleanupFailure = $_
+    }
+
+    if ($null -eq $cleanupFailure) {
+      # The exact child deletion decisions are complete. Closing them commits
+      # those decisions before the still-held directory is tested for an
+      # exact, nonrecursive delete. Untracked content makes that attempt return
+      # false and is deliberately preserved with the destination directory.
+      if ($null -ne $manifestHandle) {
+        $manifestHandle.Dispose()
+        $manifestHandle = $null
+      }
+      Close-HandleCollection -Handles $backupHandles
+      $backupHandles.Clear()
+      try {
+        $null = $destinationHandle.TrySetDeletePending()
+      } catch {
+        $cleanupFailure = $_
+      }
+    }
+  }
+
   if ($null -ne $manifestHandle) {
     $manifestHandle.Dispose()
   }
@@ -820,18 +822,12 @@ try {
 }
 
 if ($null -ne $failure) {
-  if ($destinationCreated) {
-    try {
-      Remove-TrackedQuarantineArtifacts `
-        -Destination $destination `
-        -ExpectedRoot $resolvedQuarantineRoot `
-        -ExpectedTimestamp $Timestamp `
-        -CreatedBackupPaths $createdBackupPaths `
-        -ManifestPath $manifestPath `
-        -ManifestCreated $manifestCreated
-    } catch {
-      throw "Quarantine failed and exact non-recursive cleanup also failed: $($_.Exception.Message)"
-    }
+  if ($null -ne $cleanupFailure) {
+    throw (
+      "Quarantine failed: $($failure.Exception.Message) " +
+      "Exact held-handle cleanup also failed: " +
+      $cleanupFailure.Exception.Message
+    )
   }
   throw $failure
 }
