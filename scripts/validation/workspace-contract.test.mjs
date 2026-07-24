@@ -83,6 +83,7 @@ test('workspace exposes the complete Stage 1 command contract and selected packa
   assert.equal(repository.devDependencies.prettier, '3.9.6');
   assert.equal(backend.dependencies['better-sqlite3'], '13.0.1');
   assert.equal(backend.dependencies['@google/generative-ai'], '0.24.1');
+  assert.equal(backend.dependencies.nodemailer, '9.0.3');
   assert.equal(backend.devDependencies.eslint, '10.7.0');
   assert.equal(backend.devDependencies.jest, '30.4.2');
   assert.equal(desktop.devDependencies.electron, '43.2.0');
