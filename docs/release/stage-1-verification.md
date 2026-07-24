@@ -40,16 +40,16 @@ Never paste credentials/key values, `.env`, settings, database, or manifest cont
 
 ## Purge evidence
 
-| Forbidden target | Result | Safe evidence reference |
-| --- | --- | --- |
-| DB |  |  |
-| WAL |  |  |
-| SHM |  |  |
-| Settings |  |  |
-| Real `.env` |  |  |
-| Nested `backend/.git` |  |  |
-| Generated `node_modules` before clean install |  |  |
-| Obsolete temporary script |  |  |
+| Forbidden target | Complete | Result | Safe evidence reference |
+| --- | --- | --- | --- |
+| DB | - [ ] |  |  |
+| WAL | - [ ] |  |  |
+| SHM | - [ ] |  |  |
+| Settings | - [ ] |  |  |
+| Real `.env` | - [ ] |  |  |
+| Nested `backend/.git` | - [ ] |  |  |
+| Generated `node_modules` before clean install | - [ ] |  |  |
+| Obsolete temporary script | - [ ] |  |  |
 
 ## Workspace evidence
 
@@ -76,12 +76,13 @@ Never paste credentials/key values, `.env`, settings, database, or manifest cont
 
 ## External actions
 
-| Action | Status (`pending`/`blocked`/`verified`) | Verified UTC | Operator/reference | Safe evidence |
-| --- | --- | --- | --- | --- |
-| Gemini key revocation and protected-channel replacement |  |  |  | Private incident-record reference only; the key itself is never recorded |
-| Git-history remediation |  |  |  | Commit/artifact or private incident-record reference only |
+| Action | Complete | Status (`pending`/`blocked`/`verified`) | Verified UTC | Operator/reference | Safe evidence |
+| --- | --- | --- | --- | --- | --- |
+| Exposed Gemini key revoked | - [ ] |  |  |  | Private incident-record reference only; the key itself is never recorded |
+| Replacement key not stored in repository or quarantine | - [ ] |  |  |  | Private incident-record reference only; the key itself is never recorded |
+| Git-history rewrite performed separately | - [ ] |  |  |  | Commit/artifact or private incident-record reference only |
 
-`scheduled` is not `verified`. Pending or blocked Gemini revocation or Git-history remediation forces the Stage 1 decision to **FAIL**.
+The rewrite is separate. `scheduled` is not `verified`. Pending or blocked Gemini revocation or Git-history remediation forces the Stage 1 decision to **FAIL**.
 
 ## Exit gate
 
