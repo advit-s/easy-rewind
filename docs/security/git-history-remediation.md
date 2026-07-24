@@ -47,7 +47,7 @@ After the repository owner confirms the freeze and validates every rewritten
 ref, coordinate the destructive remote update:
 
 ```powershell
-git push --force --mirror
+git push --force --mirror <REMOTE-URL>
 ```
 
 All collaborators must discard old clones and re-clone. Forks, caches, release

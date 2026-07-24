@@ -102,7 +102,8 @@ test('history remediation is a separate post-gate coordinated external action', 
   assert.match(guide, /git filter-repo/);
   assert.match(guide, /replace-text/);
   assert.match(guide, /scan all rewritten refs/i);
-  assert.match(guide, /git push --force --mirror/);
+  assert.doesNotMatch(guide, /^\s*git push --force --mirror\s*$/m);
+  assert.match(guide, /^\s*git push --force --mirror\s+<REMOTE-URL>\s*$/m);
   assert.match(guide, /discard old clones and re-clone/i);
   assert.match(guide, /forks, caches, release\s+artifacts, pull-request refs, and external mirrors/i);
   assert.match(guide, /key must still be revoked/i);
