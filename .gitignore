@@ -74,6 +74,7 @@ artifacts/
 # Nested repositories
 **/.git/
 !.git/
+/.worktrees/
 
 # Operating-system and editor files
 .DS_Store
