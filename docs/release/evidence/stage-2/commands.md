@@ -11,7 +11,7 @@ release evidence must not contain personal absolute paths.
 | `npm test`                                            |    0 | Workspace `41/41`; containment `21/21`; hygiene `63/63`; legacy backend `57/57`                 |
 | `npm run test:requirements` before records            |    1 | Expected RED: the Stage 2 requirements CSV was missing; the root script contract already passed |
 | `npm run test:requirements` after records             |    0 | GREEN: all `3/3` requirements-ledger tests passed                                               |
-| `npm run test:requirements` after validator hardening |    0 | GREEN: all `17/17` parser, global-invariant, link, ledger, and script tests passed              |
+| `npm run test:requirements` after validator hardening |    0 | GREEN: all `18/18` parser, global-invariant, link, ledger, and script tests passed              |
 | In-memory SQLite version query                        |    0 | Node `24.18.0`; npm `11.6.2`; Electron `43.2.0`; better-sqlite3 `13.0.1`; SQLite `3.53.3`       |
 
 The successful legacy backend tests emitted the known `TCPSERVERWRAP` and
@@ -26,7 +26,7 @@ does not claim a passing result.
 
 | Scope                         | Command                                            | Baseline state                                          |
 | ----------------------------- | -------------------------------------------------- | ------------------------------------------------------- |
-| Requirements ledger           | `npm run test:requirements`                        | `17/17` passed                                          |
+| Requirements ledger           | `npm run test:requirements`                        | `18/18` passed                                          |
 | Lifecycle and execution modes | `npm run test:lifecycle`                           | pending                                                 |
 | Canonical schema/migrations   | `npm run test:migrations`                          | pending                                                 |
 | Frozen API contracts          | `npm run test:contracts`                           | pending                                                 |

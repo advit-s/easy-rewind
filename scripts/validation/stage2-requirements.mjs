@@ -24,6 +24,23 @@ function isStrictDescendant(parentPath, candidatePath) {
   );
 }
 
+function assertUnlinkedPathComponents(canonicalRepositoryRoot, repositoryRelativePath, requirementId) {
+  let currentPath = canonicalRepositoryRoot;
+  let currentMetadata;
+
+  for (const component of repositoryRelativePath.split('/').filter(part => part && part !== '.')) {
+    currentPath = resolve(currentPath, component);
+    currentMetadata = lstatSync(currentPath);
+    assert.equal(
+      currentMetadata.isSymbolicLink(),
+      false,
+      `${requirementId} evidence path must not traverse a symbolic link or reparse-point link`
+    );
+  }
+
+  return { path: currentPath, metadata: currentMetadata };
+}
+
 export function parseCsv(text) {
   const records = [];
   let field = '';
@@ -117,6 +134,7 @@ export function parseRequirementRows(text) {
 export function validateRequirementsLedger({ text, repositoryRoot, expectedStage2Ids }) {
   const rows = parseRequirementRows(text);
   const ids = rows.map(row => row.id);
+  const canonicalRepositoryRoot = realpathSync.native(resolve(repositoryRoot));
 
   assert.equal(new Set(ids).size, ids.length, 'Requirement IDs must be globally unique');
 
@@ -140,30 +158,29 @@ export function validateRequirementsLedger({ text, repositoryRoot, expectedStage
       `${row.id} evidence_path must stay inside its Stage ${row.stage} release evidence`
     );
 
-    const resolvedEvidencePath = resolve(repositoryRoot, evidencePath);
+    const resolvedEvidencePath = resolve(canonicalRepositoryRoot, evidencePath);
     assert.equal(
-      relative(repositoryRoot, resolvedEvidencePath).startsWith(`..${sep}`),
-      false,
+      isStrictDescendant(canonicalRepositoryRoot, resolvedEvidencePath),
+      true,
       `${row.id} evidence_path escapes the repository`
     );
     assert.equal(existsSync(resolvedEvidencePath), true, `${row.id} evidence file is missing: ${evidencePath}`);
-    const evidenceMetadata = lstatSync(resolvedEvidencePath);
-    assert.equal(
-      evidenceMetadata.isSymbolicLink(),
-      false,
-      `${row.id} evidence path must not be a symbolic link or reparse-point link`
-    );
-    assert.equal(evidenceMetadata.isFile(), true, `${row.id} evidence path is not a file: ${evidencePath}`);
+    const evidenceEntry = assertUnlinkedPathComponents(canonicalRepositoryRoot, evidencePath, row.id);
+    assert.equal(evidenceEntry.metadata.isFile(), true, `${row.id} evidence path is not a file: ${evidencePath}`);
 
-    const evidenceRoot = resolve(repositoryRoot, 'docs', 'release', 'evidence', `stage-${row.stage}`);
-    const evidenceRootMetadata = lstatSync(evidenceRoot);
-    assert.equal(
-      evidenceRootMetadata.isSymbolicLink(),
-      false,
-      `${row.id} canonical evidence root must not be a symbolic link or reparse-point link`
-    );
+    const evidenceRoot = resolve(canonicalRepositoryRoot, 'docs', 'release', 'evidence', `stage-${row.stage}`);
     const canonicalEvidenceRoot = realpathSync.native(evidenceRoot);
-    const canonicalEvidencePath = realpathSync.native(resolvedEvidencePath);
+    const canonicalEvidencePath = realpathSync.native(evidenceEntry.path);
+    assert.equal(
+      isStrictDescendant(canonicalRepositoryRoot, canonicalEvidenceRoot),
+      true,
+      `${row.id} canonical evidence root resolves outside the canonical repository root`
+    );
+    assert.equal(
+      isStrictDescendant(canonicalRepositoryRoot, canonicalEvidencePath),
+      true,
+      `${row.id} canonical evidence file resolves outside the canonical repository root`
+    );
     assert.equal(
       isStrictDescendant(canonicalEvidenceRoot, canonicalEvidencePath),
       true,

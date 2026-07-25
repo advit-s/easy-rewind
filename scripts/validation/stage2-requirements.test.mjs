@@ -232,6 +232,51 @@ test('the Task 1 ledger keeps exactly fourteen Stage 2 rows while allowing valid
   });
 });
 
+test('evidence validation rejects a linked evidence ancestor outside the repository', t => {
+  const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-stage2-ancestor-repository-'));
+  const externalRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-stage2-ancestor-external-'));
+  const externalEvidenceRoot = join(externalRoot, 'stage-2');
+  const externalMarker = join(externalEvidenceRoot, 'README.md');
+  let externalTargetSurvived = false;
+
+  try {
+    mkdirSync(join(fixtureRoot, 'docs', 'release'), { recursive: true });
+    mkdirSync(externalEvidenceRoot, { recursive: true });
+    writeFileSync(externalMarker, '# External fixture\n', 'utf8');
+    writeFileSync(join(externalEvidenceRoot, 'commands.md'), '# External fixture\n', 'utf8');
+
+    try {
+      symlinkSync(
+        externalRoot,
+        join(fixtureRoot, 'docs', 'release', 'evidence'),
+        process.platform === 'win32' ? 'junction' : 'dir'
+      );
+    } catch (error) {
+      if (['EPERM', 'EACCES', 'ENOTSUP', 'UNKNOWN'].includes(error?.code)) {
+        t.skip('Ancestor directory-link creation is unavailable for the sanitized evidence fixture.');
+        return;
+      }
+      throw error;
+    }
+
+    assert.throws(
+      () =>
+        validateRequirementsLedger({
+          text: requirementsText,
+          repositoryRoot: fixtureRoot,
+          expectedStage2Ids,
+        }),
+      /link|reparse|canonical|outside/i
+    );
+  } finally {
+    removeTemporaryFixture(fixtureRoot, 'easy-rewind-stage2-ancestor-repository-');
+    externalTargetSurvived = existsSync(externalMarker);
+    removeTemporaryFixture(externalRoot, 'easy-rewind-stage2-ancestor-external-');
+  }
+
+  assert.equal(externalTargetSurvived, true, 'linked ancestor target must survive fixture cleanup');
+});
+
 test('evidence validation rejects a linked directory that resolves outside the canonical evidence root', t => {
   const externalRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-stage2-external-'));
 
