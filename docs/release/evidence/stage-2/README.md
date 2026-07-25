@@ -65,6 +65,14 @@ secret scanning, history rewriting, and the preserved quarantine are not
 credential revocation. Release remains blocked until provider-side revocation
 is confirmed through an authorized external record.
 
+## Requirement status vocabulary
+
+- `not-started`: implementation work has not begun.
+- `failing`: a reproducible check currently fails.
+- `implemented`: implementation exists but required verification is incomplete.
+- `verified`: the required executable or authorized manual evidence passes.
+- `blocked`: an identified external dependency or authority remains unresolved.
+
 ## Baseline decision
 
 Stage 2 is open. The requirements ledger records unimplemented work as
