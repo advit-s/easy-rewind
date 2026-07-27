@@ -63,6 +63,7 @@ test('workspace exposes the complete Stage 1 command contract and selected packa
     'test:containment',
     'test:hygiene',
     'test:workspace',
+    'test:backend',
     'test:backend:legacy-safe',
     'validate:extension',
     'scan:secrets',
@@ -86,7 +87,9 @@ test('workspace exposes the complete Stage 1 command contract and selected packa
   assert.equal(backend.dependencies.nodemailer, '9.0.3');
   assert.equal(backend.devDependencies.eslint, '10.7.0');
   assert.equal(Object.hasOwn(backend.devDependencies, 'jest'), false);
-  assert.equal(backend.scripts.test, 'node --test test/**/*.test.js');
+  assert.equal(repository.scripts['test:integration'], 'npm run test:backend && npm run test:backend:legacy-safe');
+  assert.equal(repository.scripts['test:backend'], 'npm --workspace backend test');
+  assert.equal(backend.scripts.test, 'node --test test/**/*.test.js src/**/*.test.js');
   assert.doesNotMatch(backend.scripts.test, /forceExit|detectOpenHandles|jest/i);
   assert.equal(desktop.devDependencies.electron, '43.2.0');
   assert.equal(desktop.devDependencies['@electron/rebuild'], '4.2.0');

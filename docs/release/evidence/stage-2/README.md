@@ -116,6 +116,57 @@ remaining full-audit findings are development-only transitive dependencies in
 the Electron packaging chain, primarily `electron-builder`; they are not
 claimed fixed by Task 2.
 
+## Task 3 explicit configuration and protected storage
+
+On 2026-07-28, Task 3 added one Electron-independent configuration contract
+for `production`, `standalone`, and `test` execution. The validator requires
+an absolute storage root, derives absolute database, settings, runtime-state,
+log, export, backup, and migration-work paths, and returns a deeply frozen
+configuration without creating directories. Test mode requires an explicitly
+injected repository-external operating-system temporary root and rejects
+enabled schedulers or listeners.
+
+The application API accepts only the bindable loopback literals `127.0.0.1`
+and `::1`. Production requires a nonzero port. Standalone port zero requires
+an explicit development flag, while test mode uses a disabled port-zero
+listener by default. Optional LAN sync remains disabled unless a valid
+nonzero port, distinct TLS identity reference, explicit-confirmation pairing
+policy, and private-LAN subnet policy are all provided.
+
+Storage overrides must stay lexically beneath the storage root. Existing path
+components are checked without creating directories, and linked or
+reparse-point ancestry is rejected. The Windows test creates a real junction,
+proves the validator rejects it without a skip, and verifies that the external
+target remains untouched.
+
+Protected-secret and restrictive-file-permission interfaces normalize and
+validate their inputs, preserve secret values without logging them, and
+sanitize adapter failures. The Node file-permission adapter accepts injected
+filesystem and command adapters. POSIX mode changes are verified as `0700`
+for directories and `0600` for files. The Windows adapter rejects links,
+requires a validated SID, and invokes a fixed `icacls.exe` executable with the
+exact target in a separate argument, shell execution disabled, and explicit
+failure for unsuccessful or malformed results. No module under `backend/src`
+imports Electron.
+
+The sanitized RED runs failed only because the configuration and platform
+modules did not yet exist (`0/56` configuration assertions and `0/14`
+top-level platform assertions). The manifest-contract RED run passed `5/6`
+and failed on the missing root backend-suite script. A later focused RED
+regression proved a dangling junction bypassed the initial existence check
+(`0/1`); the link inspection now uses `lstat` first and sanitizes inspection
+failures. After implementation, the focused configuration run passes `57/57`,
+the focused platform run passes `31/31` including nested cases, the manifest
+contract passes `6/6`, and the complete backend suite passes `173/173` with
+zero skips.
+
+Task 3 changed no dependency versions. The last verified Task 2 production
+audit remains `0` vulnerabilities, while the last verified Task 2 full
+development audit remains `16` high and `0` critical in the Electron
+packaging chain. The execution environment declined to send dependency
+metadata to the npm registry, so Task 3 does not claim a fresh audit or that
+the development-only findings are remediated.
+
 ## Native ABI finding
 
 The real Electron native rebuild is currently failing. The staging script

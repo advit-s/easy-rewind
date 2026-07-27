@@ -63,6 +63,25 @@ Imported process listeners are likewise reported only as `process.listener`;
 listener event names, callback identities, targets, and captured values are
 not serialized.
 
+## Task 3 configuration and platform commands
+
+All Task 3 commands used Node `24.18.0`. RED output is summarized without
+absolute paths, credentials, storage contents, certificate material, or
+command output from platform adapters.
+
+| Repository command                                                          |    Exit | Result                                                                                              |
+| --------------------------------------------------------------------------- | ------: | --------------------------------------------------------------------------------------------------- |
+| `node --test backend/src/config/create-config.test.js` before modules       |       1 | Expected RED: `0/56`; the configuration module did not exist                                        |
+| `node --test backend/src/platform/*.test.js` before modules                 |       1 | Expected RED: `0/14` top-level tests; the platform modules did not exist                            |
+| `node --test scripts/validation/workspace-contract.test.mjs` before scripts |       1 | Expected RED: `5/6`; the root backend-suite script was missing                                      |
+| Focused dangling-junction regression before fix                             |       1 | Expected RED: `0/1`; a dangling link was treated as an absent component                             |
+| `node --test backend/src/config/create-config.test.js`                      |       0 | GREEN: configuration contract `57/57`; zero skips                                                   |
+| `node --test backend/src/platform/*.test.js`                                |       0 | GREEN: platform contracts and adapter cases `31/31`; zero skips                                     |
+| `node --test scripts/validation/workspace-contract.test.mjs`                |       0 | GREEN: workspace and backend test-script contract `6/6`                                             |
+| `npm --workspace backend test`                                              |       0 | Complete backend suite `173/173`; inherited `85/85` preserved; zero skips                           |
+| `npm audit --omit=dev`                                                      | not run | Environment declined external metadata submission; Task 2 result remains `0`                        |
+| `npm audit`                                                                 | not run | Environment declined external metadata submission; Task 2 result remains `16` high and `0` critical |
+
 ## Historical Jest baseline
 
 The earlier Stage 1 Jest baseline emitted the known `TCPSERVERWRAP` and
