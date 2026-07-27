@@ -18,9 +18,10 @@ release evidence must not contain personal absolute paths.
 
 | Repository command                                              | Exit | Result                                                               |
 | --------------------------------------------------------------- | ---: | -------------------------------------------------------------------- |
-| `npm --workspace backend test`                                  |    0 | Node test runner `65/65`; inherited API/mail coverage `57/57`        |
+| `npm --workspace backend test`                                  |    0 | Node test runner `73/73`; inherited API/mail coverage `57/57`        |
 | `node --test scripts/testing/run-legacy-backend-tests.test.mjs` |    0 | Safe disposable-copy runner contract `9/9`                           |
 | `node scripts/testing/run-legacy-backend-tests.mjs`             |    0 | Disposable backend copy; isolated runtime; inherited tests `57/57`   |
+| `node --test backend/test/import-safety*.test.js`               |    0 | Import probe and production imports `9/9`; no residual resources     |
 | `npm audit --omit=dev`                                          |    0 | Production dependencies: `0` vulnerabilities                         |
 | `npm audit`                                                     |    1 | Full tree: `16` high, `0` critical; Electron packaging chain remains |
 
@@ -28,9 +29,31 @@ All commands in this section used Node `24.18.0`. The failed full audit is
 retained as a truthful advisory finding; no forced audit fix or broad
 dependency upgrade was performed.
 
-The successful legacy backend tests emitted the known `TCPSERVERWRAP` and
-`Timeout` open-handle warning. The version query used only an in-memory
-database.
+The current Node test runs in this section emitted no open-handle warning. The
+version query used only an in-memory database.
+
+## Task 2 RED-to-GREEN evidence
+
+The original Task 2 RED runs were intentionally failing and are recorded here
+without raw paths, environment values, credentials, file contents, or hashes:
+
+| RED check                        | Exit | Sanitized observed failure                                                                         |
+| -------------------------------- | ---: | -------------------------------------------------------------------------------------------------- |
+| Production import-safety         |    1 | Import created one listener, two scheduler resources, attempted a settings write, and read `.env`  |
+| Injected database-path contract  |    1 | Helpers selected the fixed repository database instead of the unique external test path            |
+| Isolated support-helper contract |    1 | Required test-environment and ephemeral-server helper modules/exports did not exist                |
+| Strengthened probe fixture suite |    1 | Environment/config, callback, promise, stream, and non-timeout resource fixtures escaped detection |
+
+After implementation, the focused Node test command passes `9/9`: eight
+adversarial probe fixtures and one production-module import check. The probe
+compares exact baseline handle identities and the complete resource-type
+multiset after event-loop settling; it uses no resource-type allowlist.
+
+## Historical Jest baseline
+
+The earlier Stage 1 Jest baseline emitted the known `TCPSERVERWRAP` and
+`Timeout` open-handle diagnostic. That historical warning does not describe
+the current Task 2 Node test runner.
 
 ## Stage 2 requirement commands
 

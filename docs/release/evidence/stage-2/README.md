@@ -53,16 +53,30 @@ Stage 1 audit result does not override this current installation finding.
 On 2026-07-25, the backend test runner was migrated from Jest to the built-in
 Node.js test runner. The `57` inherited behavior tests (`56` API tests and one
 Nodemailer compatibility test) pass with a unique repository-external
-database and settings path for every API test. The complete backend command
-passes `65/65`, including import-safety, database-path, temporary-environment,
-and loopback ephemeral-server coverage.
+database and settings path for every API test. On 2026-07-27, the import probe
+was strengthened with eight adversarial regression fixtures. The complete
+backend command passes `73/73`, including import-safety, database-path,
+temporary-environment, and loopback ephemeral-server coverage.
 
 Importing `server.js` and all eight production route modules now creates no
-listener, timeout/interval, database, settings file, or other instrumented
-runtime write. Server startup, schedulers, settings loading, and database
-opening remain explicit actions. The previous Jest `TCPSERVERWRAP` and
-`Timeout` diagnostic is therefore resolved for this test scope; this does not
-claim that the broader Task 7 lifecycle architecture is complete.
+listener, scheduler, database, settings file, filesystem write, environment
+mutation, exported runtime-config mutation, or residual handle/resource. The
+probe covers synchronous, callback, promise, open-for-write, and write-stream
+filesystem APIs, then settles the event loop and compares exact baseline
+handle identities and all resource types without an allowlist. Reports retain
+only sanitized operation, key, module, export, and path-category labels.
+Server startup, schedulers, settings loading, and database opening remain
+explicit actions. The previous Jest `TCPSERVERWRAP` and `Timeout` diagnostic
+is therefore resolved for this test scope; this does not claim that the
+broader Task 7 lifecycle architecture is complete.
+
+The recorded RED evidence is sanitized: production imports originally created
+a listener and scheduler resources, attempted settings output, and read
+`.env`; the database helper ignored the injected external path; and the
+required isolation helpers were absent. The strengthened fixture suite also
+first demonstrated that environment/config mutation, asynchronous filesystem
+writes, streams, and a non-timeout resource escaped the old probe. No raw
+environment values, personal paths, contents, or hashes are retained.
 
 Removing Jest and its lockfile-only transitive packages reduced the fresh full
 audit from the recorded baseline of `32` high-severity findings to `16` high
