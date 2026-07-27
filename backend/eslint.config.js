@@ -20,15 +20,6 @@ module.exports = [
         require: 'readonly',
         module: 'readonly',
         exports: 'readonly',
-        // Jest
-        describe: 'readonly',
-        it: 'readonly',
-        expect: 'readonly',
-        beforeAll: 'readonly',
-        afterAll: 'readonly',
-        beforeEach: 'readonly',
-        afterEach: 'readonly',
-        jest: 'readonly',
       },
     },
     rules: {
@@ -42,6 +33,6 @@ module.exports = [
       'prefer-promise-reject-errors': 'warn',
       'no-prototype-builtins': 'warn',
     },
-    ignores: ['node_modules/', 'tests/'],
+    ignores: ['node_modules/'],
   },
 ];

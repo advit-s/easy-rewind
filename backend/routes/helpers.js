@@ -28,18 +28,26 @@ const config = {
 let db = null;
 let genAI = null;
 
+function getDatabasePath() {
+  return path.resolve(process.env.DATABASE_PATH || path.join(__dirname, '..', 'data', 'easy-rewind.db'));
+}
+
+function getSettingsPath() {
+  return path.resolve(process.env.SETTINGS_PATH || path.join(__dirname, '..', 'data', 'settings.json'));
+}
+
 // ─────────────────────────────────────────────
 // SQLite Database Setup
 // ─────────────────────────────────────────────
 function getDb() {
   if (db) return db;
 
-  const dataDir = path.join(__dirname, '..', 'data');
+  const dbPath = getDatabasePath();
+  const dataDir = path.dirname(dbPath);
   if (!fs.existsSync(dataDir)) {
     fs.mkdirSync(dataDir, { recursive: true });
   }
 
-  const dbPath = path.join(dataDir, 'easy-rewind.db');
   db = new Database(dbPath);
 
   // Enable WAL mode for better concurrent performance
@@ -283,15 +291,20 @@ function getDb() {
   return db;
 }
 
+function closeDb() {
+  if (!db) return;
+  if (db.open) db.close();
+  db = null;
+}
+
 // ─────────────────────────────────────────────
 // Settings (persisted to settings.json)
 // ─────────────────────────────────────────────
-const SETTINGS_PATH = path.join(__dirname, '..', 'data', 'settings.json');
-
 function loadSettings() {
+  const settingsPath = getSettingsPath();
   try {
-    if (fs.existsSync(SETTINGS_PATH)) {
-      const raw = fs.readFileSync(SETTINGS_PATH, 'utf8');
+    if (fs.existsSync(settingsPath)) {
+      const raw = fs.readFileSync(settingsPath, 'utf8');
       const saved = JSON.parse(raw);
       const savedKey = saved.apiKey || saved.gemini_api_key;
       // Only override with saved key if it's not the placeholder AND not empty
@@ -313,14 +326,18 @@ function loadSettings() {
       if (saved.digestPrefs) config.digestPrefs = saved.digestPrefs;
       if (saved.profileUserId) config.profileUserId = saved.profileUserId;
       if (!config.profileUserId) {
-        config.profileUserId = 'shared_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+        config.profileUserId =
+          process.env.EASY_REWIND_PROFILE_USER_ID ||
+          'shared_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
         saveSettings();
       }
       console.log(
         `[Settings] Loaded: model=${config.model}, summarization=${config.summarizationBackend}, has_key=!!${!!config.apiKey}`
       );
     } else {
-      config.profileUserId = 'shared_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+      config.profileUserId =
+        process.env.EASY_REWIND_PROFILE_USER_ID ||
+        'shared_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
       saveSettings();
     }
   } catch (err) {
@@ -332,10 +349,11 @@ function loadSettings() {
 
 function saveSettings() {
   try {
-    const dataDir = path.join(__dirname, '..', 'data');
+    const settingsPath = getSettingsPath();
+    const dataDir = path.dirname(settingsPath);
     if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
     fs.writeFileSync(
-      SETTINGS_PATH,
+      settingsPath,
       JSON.stringify(
         {
           apiKey: config.apiKey || '',
@@ -357,9 +375,6 @@ function saveSettings() {
     console.warn('[Settings] Could not save settings file:', err.message);
   }
 }
-
-// Load settings on module init
-loadSettings();
 
 // ─────────────────────────────────────────────
 // Gemini AI Client
@@ -773,7 +788,10 @@ function detectSourceType(url) {
 // ─────────────────────────────────────────────
 module.exports = {
   config,
+  getDatabasePath,
+  getSettingsPath,
   getDb,
+  closeDb,
   loadSettings,
   saveSettings,
   getGenAI,

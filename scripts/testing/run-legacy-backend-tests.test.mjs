@@ -8,20 +8,24 @@ import test from 'node:test';
 
 const script = resolve(import.meta.dirname, 'run-legacy-backend-tests.mjs');
 
-function fixture(jestSource) {
+function fixture(testSource) {
   const root = mkdtempSync(join(tmpdir(), 'easy-rewind-wrapper-contract-'));
   mkdirSync(join(root, 'scripts', 'testing'), { recursive: true });
   mkdirSync(join(root, 'backend', 'data'), { recursive: true });
   mkdirSync(join(root, 'backend', 'node_modules', 'private-package'), { recursive: true });
   mkdirSync(join(root, 'backend', '.git'), { recursive: true });
-  mkdirSync(join(root, 'node_modules', 'jest', 'bin'), { recursive: true });
+  mkdirSync(join(root, 'backend', 'test'), { recursive: true });
   cpSync(script, join(root, 'scripts', 'testing', 'run-legacy-backend-tests.mjs'));
   writeFileSync(join(root, 'backend', 'server.js'), 'export {};\n');
   writeFileSync(join(root, 'backend', '.env'), 'GEMINI_API_KEY=fixture-secret\n');
   writeFileSync(join(root, 'backend', 'data', 'settings.json'), '{}\n');
   writeFileSync(join(root, 'backend', '.git', 'config'), 'fixture\n');
   writeFileSync(join(root, 'backend', 'node_modules', 'private-package', 'index.js'), 'fixture\n');
-  writeFileSync(join(root, 'node_modules', 'jest', 'bin', 'jest.js'), jestSource);
+  writeFileSync(
+    join(root, 'backend', 'test', 'api.test.js'),
+    testSource.replaceAll('__FIXTURE_REPOSITORY_ROOT__', JSON.stringify(root))
+  );
+  writeFileSync(join(root, 'backend', 'test', 'nodemailer-compatibility.test.js'), "'use strict';\n");
   return root;
 }
 
@@ -47,15 +51,15 @@ test('legacy runner uses a disposable backend copy and a repository-external dat
     assert.equal(fs.existsSync(path.join(process.cwd(), 'node_modules')), false);
     assert.ok(path.isAbsolute(process.env.DATABASE_PATH));
     assert.equal(process.env.DATABASE_PATH.includes(process.cwd()), false);
-    process.stdout.write('fixture jest passed');
+    process.stdout.write('fixture node test passed');
   `);
   rmSync(join(root, 'backend', 'data', 'settings.json'));
   writeFileSync(join(root, 'backend', 'data', 'non-sensitive-fixture.txt'), 'excluded\n');
 
   try {
     const result = run(root);
-    assert.equal(result.status, 0, result.stderr);
-    assert.match(result.stdout, /fixture jest passed/);
+    assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+    assert.match(result.stdout, /fixture node test passed/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -65,7 +69,7 @@ test('legacy runner reports forbidden repository writes using relative labels on
   const root = fixture(`
     const fs = require('node:fs');
     const path = require('node:path');
-    const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
+    const repositoryRoot = __FIXTURE_REPOSITORY_ROOT__;
     const sourceData = path.join(repositoryRoot, 'backend', 'data');
     fs.mkdirSync(sourceData, { recursive: true });
     fs.writeFileSync(path.join(sourceData, 'easy-rewind.db'), 'forbidden');
@@ -86,7 +90,7 @@ test('legacy runner redacts repository and temporary absolute paths from child o
   const root = fixture(`
     const path = require('node:path');
     process.stdout.write('cwd=' + process.cwd() + '\\n');
-    process.stderr.write('repo=' + path.resolve(__dirname, '..', '..', '..') + '\\n');
+    process.stderr.write('repo=' + __FIXTURE_REPOSITORY_ROOT__ + '\\n');
   `);
   rmSync(join(root, 'backend', 'data'), { recursive: true, force: true });
 
@@ -157,7 +161,7 @@ test('legacy runner redacts slash, file URL, and percent-encoded absolute path v
   const root = fixture(`
     const { pathToFileURL } = require('node:url');
     const path = require('node:path');
-    const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
+    const repositoryRoot = __FIXTURE_REPOSITORY_ROOT__;
     const forward = repositoryRoot.replaceAll('\\\\', '/');
     process.stdout.write(forward + '\\n');
     process.stdout.write(pathToFileURL(repositoryRoot).href + '\\n');
@@ -181,7 +185,7 @@ test('legacy runner detects arbitrary source additions with relative labels', ()
   const root = fixture(`
     const fs = require('node:fs');
     const path = require('node:path');
-    const repositoryRoot = path.resolve(__dirname, '..', '..', '..');
+    const repositoryRoot = __FIXTURE_REPOSITORY_ROOT__;
     fs.writeFileSync(path.join(repositoryRoot, 'backend', 'arbitrary-output.log'), 'changed');
   `);
   rmSync(join(root, 'backend', 'data'), { recursive: true, force: true });

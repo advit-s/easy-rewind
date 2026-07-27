@@ -48,6 +48,29 @@ remediate or reclassify them. A fresh production audit and documented
 disposition remain required before the Stage 2 exit gate can pass. An older
 Stage 1 audit result does not override this current installation finding.
 
+## Task 2 isolated backend tests
+
+On 2026-07-25, the backend test runner was migrated from Jest to the built-in
+Node.js test runner. The `57` inherited behavior tests (`56` API tests and one
+Nodemailer compatibility test) pass with a unique repository-external
+database and settings path for every API test. The complete backend command
+passes `65/65`, including import-safety, database-path, temporary-environment,
+and loopback ephemeral-server coverage.
+
+Importing `server.js` and all eight production route modules now creates no
+listener, timeout/interval, database, settings file, or other instrumented
+runtime write. Server startup, schedulers, settings loading, and database
+opening remain explicit actions. The previous Jest `TCPSERVERWRAP` and
+`Timeout` diagnostic is therefore resolved for this test scope; this does not
+claim that the broader Task 7 lifecycle architecture is complete.
+
+Removing Jest and its lockfile-only transitive packages reduced the fresh full
+audit from the recorded baseline of `32` high-severity findings to `16` high
+findings. A fresh production-only audit reports `0` vulnerabilities. The
+remaining full-audit findings are development-only transitive dependencies in
+the Electron packaging chain, primarily `electron-builder`; they are not
+claimed fixed by Task 2.
+
 ## Native ABI finding
 
 The real Electron native rebuild is currently failing. The staging script

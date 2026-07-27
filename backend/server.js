@@ -1,248 +1,235 @@
 /**
  * easy-rewind Learning Assistant - Express Backend Server
  *
- * This is the main entry point for the backend API.
- * It handles CORS, rate limiting, middleware setup, and route registration.
+ * Importing this module is intentionally inert. Call createApp() to compose
+ * the Express application or startServer() to open production resources.
  */
 
-require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const rateLimit = require('express-rate-limit');
-const path = require('path');
-const axios = require('axios');
-const apiRoutes = require('./routes/api');
+const path = require('node:path');
 
-const app = express();
-const PORT = process.env.PORT || 5000;
+function createApp(options = {}) {
+  const express = require('express');
+  const cors = require('cors');
+  const rateLimit = require('express-rate-limit');
+  const apiRoutes = require('./routes/api');
+  const app = express();
+  const rateLimitStores = [];
+  const rateLimitsEnabled = options.rateLimitsEnabled !== false;
+  const requestLogging = options.requestLogging !== false;
 
-// ─────────────────────────────────────────────
-// CORS Configuration
-// Allows requests from Chrome extensions and local dashboard
-// ─────────────────────────────────────────────
-const corsOptions = {
-  origin: function (origin, callback) {
-    // Allow requests with no origin (like mobile apps, Postman, curl)
-    if (!origin) return callback(null, true);
+  const corsOptions = {
+    origin(origin, callback) {
+      if (!origin) return callback(null, true);
+      if (origin.startsWith('chrome-extension://')) return callback(null, true);
 
-    // Allow Chrome extensions (any extension ID)
-    if (origin.startsWith('chrome-extension://')) return callback(null, true);
-
-    // Allow local development origins
-    const allowedOrigins = [
-      'http://localhost:3000',
-      'http://localhost:5000',
-      'http://127.0.0.1:5000',
-      'http://127.0.0.1:3000',
-    ];
-
-    if (allowedOrigins.includes(origin)) return callback(null, true);
-
-    // Block all other origins
-    callback(new Error(`CORS policy: Origin ${origin} not allowed`));
-  },
-  methods: ['GET', 'POST', 'DELETE', 'PATCH', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id'],
-  credentials: true,
-};
-
-app.use(cors(corsOptions));
-
-// ─────────────────────────────────────────────
-// Rate Limiting
-// Prevents abuse of the AI lookup endpoint
-// ─────────────────────────────────────────────
-const generalLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 200, // max 200 requests per window
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Too many requests. Please wait a few minutes and try again.' },
-});
-
-const aiLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: 10, // max 10 AI lookups per minute (cached responses bypass this)
-  message: { error: 'Too many AI lookups. Please wait a moment.' },
-});
-
-app.use(generalLimiter);
-
-// ─────────────────────────────────────────────
-// Security Headers (CSP, XSS, etc.)
-// ─────────────────────────────────────────────
-app.use((req, res, next) => {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('X-XSS-Protection', '1; mode=block');
-  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-  res.setHeader(
-    'Content-Security-Policy',
-    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' http://localhost:*"
-  );
-  next();
-});
-
-// ─────────────────────────────────────────────
-// Body Parsing Middleware
-// ─────────────────────────────────────────────
-app.use(express.json({ limit: '100kb' }));
-app.use(express.urlencoded({ extended: true }));
-
-// ─────────────────────────────────────────────
-// Request Logging with timing
-// ─────────────────────────────────────────────
-app.use((req, res, next) => {
-  const start = Date.now();
-  const timestamp = new Date().toISOString();
-
-  // Capture response finish
-  res.on('finish', () => {
-    const duration = Date.now() - start;
-    const emoji = res.statusCode >= 500 ? '❌' : res.statusCode >= 400 ? '⚠️' : '✅';
-    console.log(`${emoji} [${timestamp}] ${req.method} ${req.originalUrl} → ${res.statusCode} (${duration}ms)`);
-  });
-
-  next();
-});
-
-// ─────────────────────────────────────────────
-// Serve Dashboard Website
-// The dashboard.html is served from the frontend folder
-// ─────────────────────────────────────────────
-app.use(express.static(path.join(__dirname, '..', 'frontend')));
-
-// Dashboard route
-app.get('/dashboard', (req, res) => {
-  res.sendFile(path.join(__dirname, '..', 'frontend', 'dashboard.html'));
-});
-
-// Root redirect to dashboard
-app.get('/', (req, res) => {
-  res.redirect('/dashboard');
-});
-
-// ─────────────────────────────────────────────
-// API Routes
-// Apply AI-specific rate limiter only to the quick-lookup route
-// ─────────────────────────────────────────────
-app.use('/api/quick-lookup', aiLimiter);
-app.use('/api', apiRoutes);
-
-// ─────────────────────────────────────────────
-// Global Error Handler
-// Catches any unhandled errors and returns clean JSON responses
-// ─────────────────────────────────────────────
-app.use((err, req, res, _next) => {
-  console.error('[Server Error]', err.message);
-
-  // CORS errors
-  if (err.message && err.message.startsWith('CORS policy')) {
-    return res.status(403).json({ error: 'Request blocked by CORS policy.' });
-  }
-
-  res.status(500).json({
-    error: 'Internal server error. Please try again.',
-    ...(process.env.NODE_ENV === 'development' && { details: err.message }),
-  });
-});
-
-// ─────────────────────────────────────────────
-// 404 Handler for unmatched routes
-// ─────────────────────────────────────────────
-app.use((req, res) => {
-  res.status(404).json({ error: `Route ${req.method} ${req.path} not found.` });
-});
-
-// ─────────────────────────────────────────────
-// Start Server
-// ─────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log('');
-  console.log('╔══════════════════════════════════════════╗');
-  console.log('║     easy-rewind Learning Assistant       ║');
-  console.log('║        Backend Server Running             ║');
-  console.log('╠══════════════════════════════════════════╣');
-  console.log(`║  API:       http://localhost:${PORT}/api     ║`);
-  console.log(`║  Dashboard: http://localhost:${PORT}/dashboard ║`);
-  console.log(`║  Health:    http://localhost:${PORT}/api/health ║`);
-  console.log('╚══════════════════════════════════════════╝');
-  console.log('');
-
-  // Warn if Gemini API key is not set
-  if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'your_gemini_api_key_here') {
-    console.warn('WARNING: Gemini API key not configured in .env');
-    console.warn('   AI quick-lookup will use mock responses until configured.\n');
-  }
-
-  // Auto-check reminders every 2 minutes (built-in, no extension needed)
-  setInterval(
-    async () => {
-      try {
-        await axios.post(
-          `http://localhost:${PORT}/api/check-reminders`,
-          {},
-          {
-            headers: { 'Content-Type': 'application/json', 'x-user-id': 'system' },
-          }
-        );
-      } catch {
-        /* silent — server self-check is best-effort */
-      }
+      const allowedOrigins = [
+        'http://localhost:3000',
+        'http://localhost:5000',
+        'http://127.0.0.1:5000',
+        'http://127.0.0.1:3000',
+      ];
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      callback(new Error(`CORS policy: Origin ${origin} not allowed`));
     },
-    2 * 60 * 1000
-  );
-  console.log('[Reminders] Auto-check every 2 minutes enabled\n');
+    methods: ['GET', 'POST', 'DELETE', 'PATCH', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id'],
+    credentials: true,
+  };
+  app.use(cors(corsOptions));
 
-  // Weekly digest auto-generation — checks every hour if a digest is due
-  setInterval(
-    async () => {
-      try {
-        const { config, loadSettings } = require('./routes/helpers');
-        loadSettings();
-        const prefs = config.digestPrefs || {};
-        if (!prefs.enabled) return;
+  if (rateLimitsEnabled) {
+    const generalStore = new rateLimit.MemoryStore();
+    const aiStore = new rateLimit.MemoryStore();
+    rateLimitStores.push(generalStore, aiStore);
+    app.use(
+      rateLimit({
+        windowMs: 15 * 60 * 1000,
+        limit: 200,
+        standardHeaders: true,
+        legacyHeaders: false,
+        message: { error: 'Too many requests. Please wait a few minutes and try again.' },
+        store: generalStore,
+      })
+    );
+    app.use(
+      '/api/quick-lookup',
+      rateLimit({
+        windowMs: 60 * 1000,
+        limit: 10,
+        message: { error: 'Too many AI lookups. Please wait a moment.' },
+        store: aiStore,
+      })
+    );
+  }
 
-        // Check if a digest is due (once per week on the configured day+hour)
-        const now = new Date();
-        const currentDay = now.getDay();
-        const currentHour = now.getHours();
-        const targetDay = prefs.day_of_week ?? 0;
-        const targetHour = prefs.hour ?? 9;
+  app.use((request, response, next) => {
+    response.setHeader('X-Content-Type-Options', 'nosniff');
+    response.setHeader('X-Frame-Options', 'DENY');
+    response.setHeader('X-XSS-Protection', '1; mode=block');
+    response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    response.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' http://localhost:*"
+    );
+    next();
+  });
 
-        if (currentDay !== targetDay || currentHour !== targetHour) return;
+  app.use(express.json({ limit: '100kb' }));
+  app.use(express.urlencoded({ extended: true }));
 
-        // Only generate if no digest was generated today
-        const today = now.toISOString().slice(0, 10);
-        if (prefs.last_digest_at && prefs.last_digest_at.startsWith(today)) return;
-
-        // Also check that we're not too early in the hour (wait 5 min for clock jitter)
-        if (now.getMinutes() > 15) return;
-
-        await axios.post(
-          `http://localhost:${PORT}/api/digest/generate`,
-          {},
-          {
-            headers: { 'Content-Type': 'application/json', 'x-user-id': 'system' },
-          }
+  if (requestLogging) {
+    app.use((request, response, next) => {
+      const start = Date.now();
+      const timestamp = new Date().toISOString();
+      response.on('finish', () => {
+        const duration = Date.now() - start;
+        const marker = response.statusCode >= 500 ? 'ERROR' : response.statusCode >= 400 ? 'WARN' : 'OK';
+        console.log(
+          `[${marker}] [${timestamp}] ${request.method} ${request.originalUrl} -> ${response.statusCode} (${duration}ms)`
         );
+      });
+      next();
+    });
+  }
 
-        // Update last_digest_at
-        prefs.last_digest_at = now.toISOString();
-        config.digestPrefs = prefs;
+  app.use(express.static(path.join(__dirname, '..', 'frontend')));
+  app.get('/dashboard', (_request, response) => {
+    response.sendFile(path.join(__dirname, '..', 'frontend', 'dashboard.html'));
+  });
+  app.get('/', (_request, response) => {
+    response.redirect('/dashboard');
+  });
+
+  app.use('/api', apiRoutes);
+  app.use((error, _request, response, _next) => {
+    console.error('[Server Error]', error.message);
+    if (error.message && error.message.startsWith('CORS policy')) {
+      return response.status(403).json({ error: 'Request blocked by CORS policy.' });
+    }
+    response.status(500).json({
+      error: 'Internal server error. Please try again.',
+      ...(process.env.NODE_ENV === 'development' && { details: error.message }),
+    });
+  });
+  app.use((request, response) => {
+    response.status(404).json({ error: `Route ${request.method} ${request.path} not found.` });
+  });
+
+  let appClosed = false;
+  app.locals.close = () => {
+    if (appClosed) return;
+    appClosed = true;
+    for (const store of rateLimitStores) store.shutdown();
+  };
+  return app;
+}
+
+function startSchedulers(origin) {
+  const axios = require('axios');
+  const intervals = [];
+
+  intervals.push(
+    setInterval(
+      async () => {
         try {
-          const { saveSettings } = require('./routes/helpers');
+          await axios.post(
+            `${origin}/api/check-reminders`,
+            {},
+            { headers: { 'Content-Type': 'application/json', 'x-user-id': 'system' } }
+          );
+        } catch {
+          // Server self-check is best effort.
+        }
+      },
+      2 * 60 * 1000
+    )
+  );
+
+  intervals.push(
+    setInterval(
+      async () => {
+        try {
+          const { config, loadSettings, saveSettings } = require('./routes/helpers');
+          loadSettings();
+          const prefs = config.digestPrefs || {};
+          if (!prefs.enabled) return;
+
+          const now = new Date();
+          if (now.getDay() !== (prefs.day_of_week ?? 0) || now.getHours() !== (prefs.hour ?? 9)) return;
+          const today = now.toISOString().slice(0, 10);
+          if (prefs.last_digest_at?.startsWith(today) || now.getMinutes() > 15) return;
+
+          await axios.post(
+            `${origin}/api/digest/generate`,
+            {},
+            { headers: { 'Content-Type': 'application/json', 'x-user-id': 'system' } }
+          );
+          prefs.last_digest_at = now.toISOString();
+          config.digestPrefs = prefs;
           saveSettings();
-        } catch {}
+          console.log(`[Digest] Auto-generated weekly digest at ${now.toISOString()}`);
+        } catch {
+          // Digest generation is best effort.
+        }
+      },
+      60 * 60 * 1000
+    )
+  );
 
-        console.log(`[Digest] Auto-generated weekly digest at ${now.toISOString()}`);
-      } catch {
-        /* silent — best-effort */
+  return intervals;
+}
+
+async function startServer(options = {}) {
+  require('dotenv').config();
+  const { closeDb, loadSettings } = require('./routes/helpers');
+  loadSettings();
+
+  const app = options.app || createApp(options);
+  const port = Number.parseInt(options.port ?? process.env.PORT ?? '5000', 10);
+  const host = options.host;
+  const server = await new Promise((resolve, reject) => {
+    const listener = host ? app.listen(port, host, () => resolve(listener)) : app.listen(port, () => resolve(listener));
+    listener.once('error', reject);
+  });
+  const address = server.address();
+  const actualPort = typeof address === 'object' ? address.port : port;
+  const origin = `http://127.0.0.1:${actualPort}`;
+  const schedulersEnabled = options.schedulersEnabled ?? process.env.EASY_REWIND_SCHEDULERS_ENABLED !== 'false';
+  const intervals = schedulersEnabled ? startSchedulers(origin) : [];
+  let closePromise;
+
+  console.log(`[Server] API listening at ${origin}/api`);
+  if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'your_gemini_api_key_here') {
+    console.warn('WARNING: Gemini API key not configured; AI quick-lookup will use fallback responses.');
+  }
+
+  return {
+    app,
+    server,
+    origin,
+    close() {
+      if (!closePromise) {
+        closePromise = (async () => {
+          for (const interval of intervals) clearInterval(interval);
+          if (server.listening) {
+            await new Promise((resolve, reject) => {
+              server.close(error => (error ? reject(error) : resolve()));
+            });
+          }
+          app.locals.close?.();
+          closeDb();
+        })();
       }
+      return closePromise;
     },
-    60 * 60 * 1000
-  ); // Check once per hour
-  console.log('[Digest] Weekly auto-digest enabled (hourly check)\n');
-});
+  };
+}
 
-module.exports = app;
+if (require.main === module) {
+  startServer().catch(error => {
+    console.error('[Server Startup Error]', error.message);
+    process.exitCode = 1;
+  });
+}
+
+module.exports = { createApp, startServer };

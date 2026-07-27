@@ -177,7 +177,13 @@ function safeEnvironment(temporaryRoot, temporaryBackend, runtimeDirectory) {
     NODE_ENV: 'test',
     NODE_PATH: join(repositoryRoot, 'node_modules'),
     DATABASE_PATH: join(runtimeDirectory, 'test.db'),
-    ALLOWED_ORIGINS: 'http://127.0.0.1:5000',
+    SETTINGS_PATH: join(runtimeDirectory, 'settings.json'),
+    LOG_PATH: join(runtimeDirectory, 'backend.log'),
+    EXPORT_PATH: join(runtimeDirectory, 'export.json'),
+    EASY_REWIND_PROFILE_USER_ID: 'legacy-safe-test-profile',
+    EASY_REWIND_SCHEDULERS_ENABLED: 'false',
+    EASY_REWIND_TEST_REPOSITORY_ROOT: temporaryBackend,
+    ALLOWED_ORIGINS: 'http://127.0.0.1',
     GEMINI_API_KEY: '',
     GOOGLE_API_KEY: '',
     OPENAI_API_KEY: '',
@@ -289,11 +295,18 @@ function main() {
       [temporaryRoot, '<temporary-root>'],
       [repositoryRoot, '<repository-root>'],
     ];
-    const jest = join(repositoryRoot, 'node_modules', 'jest', 'bin', 'jest.js');
     const preload = writeProcessDenyPreload(temporaryRoot);
     result = spawnSync(
       process.execPath,
-      ['--require', preload, '--experimental-vm-modules', jest, '--forceExit', '--detectOpenHandles', '--runInBand'],
+      [
+        '--require',
+        preload,
+        '--test',
+        '--test-isolation=none',
+        '--test-concurrency=1',
+        'test/api.test.js',
+        'test/nodemailer-compatibility.test.js',
+      ],
       {
         cwd: temporaryBackend,
         encoding: 'utf8',

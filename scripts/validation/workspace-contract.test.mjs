@@ -85,7 +85,9 @@ test('workspace exposes the complete Stage 1 command contract and selected packa
   assert.equal(backend.dependencies['@google/generative-ai'], '0.24.1');
   assert.equal(backend.dependencies.nodemailer, '9.0.3');
   assert.equal(backend.devDependencies.eslint, '10.7.0');
-  assert.equal(backend.devDependencies.jest, '30.4.2');
+  assert.equal(Object.hasOwn(backend.devDependencies, 'jest'), false);
+  assert.equal(backend.scripts.test, 'node --test test/**/*.test.js');
+  assert.doesNotMatch(backend.scripts.test, /forceExit|detectOpenHandles|jest/i);
   assert.equal(desktop.devDependencies.electron, '43.2.0');
   assert.equal(desktop.devDependencies['@electron/rebuild'], '4.2.0');
   assert.equal(desktop.devDependencies['electron-builder'], '26.15.3');

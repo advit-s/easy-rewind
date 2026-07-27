@@ -6,12 +6,12 @@
 
 const express = require('express');
 const router = express.Router();
-const path = require('path');
 const fs = require('fs');
 const axios = require('axios');
 
 const {
   config,
+  getSettingsPath,
   getDb,
   getGenAI,
   resetGenAI,
@@ -21,8 +21,6 @@ const {
   getUserId,
   saveSettings,
 } = require('./helpers');
-
-const SETTINGS_PATH = path.join(__dirname, '..', 'data', 'settings.json');
 
 // ─────────────────────────────────────────────
 // GET /api/health — Server health check
@@ -262,7 +260,9 @@ Format using plain text with markdown headers.`;
       const existingItem = database.prepare('SELECT id FROM items WHERE url = ? AND user_id = ?').get(url, userId);
       if (existingItem) {
         database
-          .prepare("UPDATE items SET ai_summary = ?, updated_at = (strftime('%Y-%m-%dT%H:%M:%S', 'now') || 'Z') WHERE id = ?")
+          .prepare(
+            "UPDATE items SET ai_summary = ?, updated_at = (strftime('%Y-%m-%dT%H:%M:%S', 'now') || 'Z') WHERE id = ?"
+          )
           .run(analysis, existingItem.id);
         console.log('[Research] Updated item', existingItem.id, 'with AI summary');
       } else {
@@ -271,7 +271,14 @@ Format using plain text with markdown headers.`;
             `INSERT INTO items (user_id, url, title, content, ai_summary, tags, source_type, memory_score, created_at, updated_at)
              VALUES (?, ?, ?, ?, ?, '', ?, 1.0, (strftime('%Y-%m-%dT%H:%M:%S', 'now') || 'Z'), (strftime('%Y-%m-%dT%H:%M:%S', 'now') || 'Z'))`
           )
-          .run(userId, sanitize(url, 2000), sanitize(title || url, 500), (pageContent || '').slice(0, 2000), analysis, sourceType);
+          .run(
+            userId,
+            sanitize(url, 2000),
+            sanitize(title || url, 500),
+            (pageContent || '').slice(0, 2000),
+            analysis,
+            sourceType
+          );
         const itemId = database.prepare('SELECT last_insert_rowid() as id').get().id;
         console.log('[Research] Created item', itemId, 'with AI summary');
       }
@@ -585,7 +592,7 @@ router.get('/settings', (req, res) => {
     embed_provider: config.embedProvider,
     has_runtime_key: !!config.apiKey,
     has_env_key: !!process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== 'your_gemini_api_key_here',
-    settings_file_exists: fs.existsSync(SETTINGS_PATH),
+    settings_file_exists: fs.existsSync(getSettingsPath()),
   });
 });
 

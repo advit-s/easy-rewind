@@ -14,6 +14,20 @@ release evidence must not contain personal absolute paths.
 | `npm run test:requirements` after validator hardening |    0 | GREEN: all `18/18` parser, global-invariant, link, ledger, and script tests passed              |
 | In-memory SQLite version query                        |    0 | Node `24.18.0`; npm `11.6.2`; Electron `43.2.0`; better-sqlite3 `13.0.1`; SQLite `3.53.3`       |
 
+## Task 2 isolated-test commands
+
+| Repository command                                              | Exit | Result                                                               |
+| --------------------------------------------------------------- | ---: | -------------------------------------------------------------------- |
+| `npm --workspace backend test`                                  |    0 | Node test runner `65/65`; inherited API/mail coverage `57/57`        |
+| `node --test scripts/testing/run-legacy-backend-tests.test.mjs` |    0 | Safe disposable-copy runner contract `9/9`                           |
+| `node scripts/testing/run-legacy-backend-tests.mjs`             |    0 | Disposable backend copy; isolated runtime; inherited tests `57/57`   |
+| `npm audit --omit=dev`                                          |    0 | Production dependencies: `0` vulnerabilities                         |
+| `npm audit`                                                     |    1 | Full tree: `16` high, `0` critical; Electron packaging chain remains |
+
+All commands in this section used Node `24.18.0`. The failed full audit is
+retained as a truthful advisory finding; no forced audit fix or broad
+dependency upgrade was performed.
+
 The successful legacy backend tests emitted the known `TCPSERVERWRAP` and
 `Timeout` open-handle warning. The version query used only an in-memory
 database.
