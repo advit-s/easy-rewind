@@ -3,6 +3,7 @@
 const { createHash } = require('node:crypto');
 const { lstatSync, readFileSync, readdirSync } = require('node:fs');
 const { join, resolve } = require('node:path');
+const { findForbiddenMigrationStatement } = require('./migration-sql-validator');
 
 const defaultMigrationDirectory = join(__dirname, 'migrations');
 const migrationFilenamePattern = /^(\d{3})_([a-z][a-z0-9_]*)\.sql$/;
@@ -23,6 +24,7 @@ const MIGRATION_ERROR_MESSAGES = Object.freeze({
   MIGRATION_CHECKSUM_MISMATCH: 'An applied migration checksum does not match the canonical bytes.',
   MIGRATION_BUSY: 'The database migration lock could not be acquired.',
   MIGRATION_SQL_FAILED: 'A database migration could not be applied atomically.',
+  MIGRATION_TRANSACTION_CONTROL: 'Migration SQL must not control transactions or database attachment.',
   MIGRATION_CLOCK_INVALID: 'The migration timestamp is invalid.',
 });
 
@@ -204,6 +206,9 @@ function runMigrations({ db, migrations = discoverMigrations(), now = Date.now }
     fail('MIGRATION_OPTIONS_INVALID');
   }
   const manifest = validateManifest(migrations);
+  if (manifest.some(migration => findForbiddenMigrationStatement(migration.bytes) !== null)) {
+    fail('MIGRATION_TRANSACTION_CONTROL');
+  }
 
   let appliedCount;
   beginImmediate(db);

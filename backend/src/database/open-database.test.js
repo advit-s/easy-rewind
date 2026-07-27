@@ -16,6 +16,7 @@ const { tmpdir } = require('node:os');
 const { dirname, join, resolve, sep } = require('node:path');
 const { spawnSync } = require('node:child_process');
 const test = require('node:test');
+const BetterSqlite3 = require('better-sqlite3');
 
 const modulePath = join(__dirname, 'open-database.js');
 const temporaryRoots = new Set();
@@ -105,7 +106,10 @@ test('writable open enforces foreign keys, WAL, busy timeout, permissions, and i
   assert.equal(db.pragma('foreign_keys', { simple: true }), 1);
   assert.equal(db.pragma('journal_mode', { simple: true }), 'wal');
   assert.equal(db.pragma('busy_timeout', { simple: true }), 2345);
-  assert.deepEqual(permissions.calls, [['file', path]]);
+  assert.deepEqual(permissions.calls, [
+    ['directory', dirname(path)],
+    ['file', path],
+  ]);
   assert.equal(existsSync(path), true);
   assert.doesNotThrow(() => db.close());
   assert.doesNotThrow(() => db.close());
@@ -283,4 +287,91 @@ test('existing non-database files and directories are rejected safely', async t 
       path
     );
   });
+});
+
+test('parent permissions are restricted before native SQLite can create the database', async () => {
+  const path = makeDatabasePath();
+  const calls = [];
+  const { openDatabase } = require('./open-database');
+
+  const db = await openDatabase({
+    path,
+    filePermissions: {
+      async restrictDirectory(parent) {
+        calls.push(['directory', parent, existsSync(path)]);
+      },
+      async restrictFile(file) {
+        calls.push(['file', file, existsSync(path)]);
+      },
+    },
+  });
+
+  assert.deepEqual(calls, [
+    ['directory', dirname(path), false],
+    ['file', path, true],
+  ]);
+  db.close();
+});
+
+test('parent permission failure rejects before opening or creating a database', async () => {
+  const path = makeDatabasePath();
+  let fileRestrictionCalled = false;
+  const { openDatabase } = require('./open-database');
+
+  await assertDatabaseError(
+    () =>
+      openDatabase({
+        path,
+        filePermissions: {
+          async restrictDirectory() {
+            throw new Error('private parent failure');
+          },
+          async restrictFile() {
+            fileRestrictionCalled = true;
+          },
+        },
+      }),
+    'DATABASE_FILE_PERMISSIONS_FAILED',
+    'private parent failure'
+  );
+  assert.equal(existsSync(path), false);
+  assert.equal(fileRestrictionCalled, false);
+});
+
+test('existing WAL and SHM sidecars receive restrictive file permissions after configuration', async () => {
+  const path = makeDatabasePath();
+  const holder = new BetterSqlite3(path);
+  holder.pragma('journal_mode = WAL');
+  holder.exec('CREATE TABLE held_record (id INTEGER PRIMARY KEY); INSERT INTO held_record DEFAULT VALUES;');
+  assert.equal(existsSync(`${path}-wal`), true);
+  assert.equal(existsSync(`${path}-shm`), true);
+  const permissions = permissionRecorder();
+  const { openDatabase } = require('./open-database');
+
+  const db = await openDatabase({ path, filePermissions: permissions.adapter });
+
+  assert.deepEqual(permissions.calls, [
+    ['directory', dirname(path)],
+    ['file', path],
+    ['file', `${path}-wal`],
+    ['file', `${path}-shm`],
+  ]);
+  db.close();
+  holder.close();
+});
+
+test('a failed close remains retryable after an active iterator is released', async () => {
+  const path = makeDatabasePath();
+  const { openDatabase } = require('./open-database');
+  const db = await openDatabase({ path, filePermissions: permissionRecorder().adapter });
+  db.exec('CREATE TABLE close_record (id INTEGER PRIMARY KEY); INSERT INTO close_record DEFAULT VALUES;');
+  const iterator = db.prepare('SELECT id FROM close_record').iterate();
+  iterator.next();
+
+  assert.throws(() => db.close(), /busy|connection/i);
+  assert.equal(db.open, true);
+  iterator.return();
+  assert.doesNotThrow(() => db.close());
+  assert.equal(db.open, false);
+  assert.doesNotThrow(() => db.close());
 });

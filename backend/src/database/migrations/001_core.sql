@@ -29,28 +29,30 @@ CREATE TABLE items (
 CREATE TABLE bookmarks (
   id TEXT PRIMARY KEY CHECK (id <> ''),
   profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-  item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  item_id TEXT NOT NULL,
   created_at INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0)
+  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0),
+  FOREIGN KEY (profile_id, item_id) REFERENCES items(profile_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE notes (
   id TEXT PRIMARY KEY CHECK (id <> ''),
   profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-  item_id TEXT REFERENCES items(id) ON DELETE CASCADE,
+  item_id TEXT,
   body TEXT NOT NULL,
   created_at INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0)
+  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0),
+  FOREIGN KEY (profile_id, item_id) REFERENCES items(profile_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE highlights (
   id TEXT PRIMARY KEY CHECK (id <> ''),
   profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-  item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  item_id TEXT NOT NULL,
   quote TEXT NOT NULL CHECK (quote <> ''),
   prefix TEXT NOT NULL DEFAULT '',
   suffix TEXT NOT NULL DEFAULT '',
@@ -58,7 +60,8 @@ CREATE TABLE highlights (
   created_at INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0)
+  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0),
+  FOREIGN KEY (profile_id, item_id) REFERENCES items(profile_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE tags (
@@ -75,45 +78,50 @@ CREATE TABLE tags (
 CREATE TABLE item_tags (
   id TEXT PRIMARY KEY CHECK (id <> ''),
   profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-  item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-  tag_id TEXT NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+  item_id TEXT NOT NULL,
+  tag_id TEXT NOT NULL,
   created_at INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0)
+  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0),
+  FOREIGN KEY (profile_id, item_id) REFERENCES items(profile_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (profile_id, tag_id) REFERENCES tags(profile_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE connections (
   id TEXT PRIMARY KEY CHECK (id <> ''),
   profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-  source_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
-  target_item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  source_item_id TEXT NOT NULL,
+  target_item_id TEXT NOT NULL,
   relation TEXT NOT NULL CHECK (relation <> ''),
   note TEXT NOT NULL DEFAULT '',
   created_at INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
   deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0),
-  CHECK (source_item_id <> target_item_id)
+  CHECK (source_item_id <> target_item_id),
+  FOREIGN KEY (profile_id, source_item_id) REFERENCES items(profile_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (profile_id, target_item_id) REFERENCES items(profile_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE reminders (
   id TEXT PRIMARY KEY CHECK (id <> ''),
   profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-  item_id TEXT REFERENCES items(id) ON DELETE CASCADE,
+  item_id TEXT,
   state TEXT NOT NULL CHECK (state IN ('scheduled', 'snoozed', 'completed', 'cancelled')),
   due_at INTEGER NOT NULL CHECK (due_at >= 0),
   completed_at INTEGER CHECK (completed_at IS NULL OR completed_at >= 0),
   created_at INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0)
+  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0),
+  FOREIGN KEY (profile_id, item_id) REFERENCES items(profile_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE reminder_deliveries (
   id TEXT PRIMARY KEY CHECK (id <> ''),
   profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-  reminder_id TEXT NOT NULL REFERENCES reminders(id) ON DELETE CASCADE,
+  reminder_id TEXT NOT NULL,
   channel TEXT NOT NULL CHECK (channel IN ('desktop', 'browser', 'email')),
   state TEXT NOT NULL CHECK (state IN ('pending', 'delivering', 'delivered', 'failed', 'cancelled')),
   attempt_count INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
@@ -123,13 +131,14 @@ CREATE TABLE reminder_deliveries (
   created_at INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0)
+  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0),
+  FOREIGN KEY (profile_id, reminder_id) REFERENCES reminders(profile_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE flashcards (
   id TEXT PRIMARY KEY CHECK (id <> ''),
   profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-  item_id TEXT REFERENCES items(id) ON DELETE CASCADE,
+  item_id TEXT,
   prompt TEXT NOT NULL CHECK (prompt <> ''),
   answer TEXT NOT NULL CHECK (answer <> ''),
   state TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'suspended', 'retired')),
@@ -139,13 +148,14 @@ CREATE TABLE flashcards (
   created_at INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0)
+  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0),
+  FOREIGN KEY (profile_id, item_id) REFERENCES items(profile_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE quiz_results (
   id TEXT PRIMARY KEY CHECK (id <> ''),
   profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-  item_id TEXT REFERENCES items(id) ON DELETE CASCADE,
+  item_id TEXT,
   quiz_kind TEXT NOT NULL CHECK (quiz_kind <> ''),
   score INTEGER NOT NULL CHECK (score >= 0),
   max_score INTEGER NOT NULL CHECK (max_score > 0 AND score <= max_score),
@@ -154,7 +164,8 @@ CREATE TABLE quiz_results (
   created_at INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision >= 1),
-  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0)
+  deleted_at INTEGER CHECK (deleted_at IS NULL OR deleted_at >= 0),
+  FOREIGN KEY (profile_id, item_id) REFERENCES items(profile_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE research_jobs (
@@ -218,14 +229,17 @@ CREATE UNIQUE INDEX uq_item_tags_live ON item_tags(profile_id, item_id, tag_id) 
 CREATE INDEX idx_item_tags_profile_tag ON item_tags(profile_id, tag_id, deleted_at, item_id);
 CREATE INDEX idx_items_profile_updated ON items(profile_id, deleted_at, updated_at DESC, id);
 CREATE INDEX idx_items_profile_kind ON items(profile_id, kind, deleted_at, updated_at DESC, id);
+CREATE UNIQUE INDEX uq_items_profile_id ON items(profile_id, id);
 CREATE INDEX idx_notes_profile_item ON notes(profile_id, item_id, deleted_at, updated_at DESC, id);
 CREATE INDEX idx_quiz_results_profile_completed ON quiz_results(profile_id, deleted_at, completed_at DESC, id);
 CREATE INDEX idx_reminder_deliveries_pending ON reminder_deliveries(profile_id, state, scheduled_at, attempt_count, id);
 CREATE INDEX idx_reminders_profile_due ON reminders(profile_id, state, deleted_at, due_at, id);
+CREATE UNIQUE INDEX uq_reminders_profile_id ON reminders(profile_id, id);
 CREATE INDEX idx_research_jobs_profile_state ON research_jobs(profile_id, state, deleted_at, updated_at, id);
 CREATE UNIQUE INDEX uq_settings_live_key ON settings(profile_id, key) WHERE deleted_at IS NULL;
 CREATE INDEX idx_tags_profile_name ON tags(profile_id, deleted_at, normalized_name, id);
 CREATE UNIQUE INDEX uq_tags_live_name ON tags(profile_id, normalized_name) WHERE deleted_at IS NULL;
+CREATE UNIQUE INDEX uq_tags_profile_id ON tags(profile_id, id);
 
 CREATE VIRTUAL TABLE items_fts USING fts5(
   item_id UNINDEXED,

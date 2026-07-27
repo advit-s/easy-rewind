@@ -103,8 +103,8 @@ function makeCloseIdempotent(db) {
   let closed = false;
   db.close = () => {
     if (closed) return;
-    closed = true;
     nativeClose();
+    closed = true;
   };
   return db;
 }
@@ -119,6 +119,14 @@ async function openDatabase(options) {
   const targetMetadata = inspectPath(normalized.path);
   if (targetMetadata !== null && !targetMetadata.isFile()) fail('DATABASE_TARGET_INVALID');
   if (normalized.readonly && targetMetadata === null) fail('DATABASE_READONLY_MISSING');
+
+  try {
+    // Restrict the directory first: it is the creation boundary for the main file
+    // and SQLite-managed WAL/SHM sidecars.
+    await normalized.filePermissions.restrictDirectory(parent);
+  } catch {
+    fail('DATABASE_FILE_PERMISSIONS_FAILED');
+  }
 
   let db;
   try {
@@ -143,13 +151,19 @@ async function openDatabase(options) {
   }
 
   try {
-    await normalized.filePermissions.restrictFile(normalized.path);
-  } catch {
+    for (const path of [normalized.path, `${normalized.path}-wal`, `${normalized.path}-shm`]) {
+      const metadata = inspectPath(path);
+      if (metadata === null) continue;
+      if (!metadata.isFile()) fail('DATABASE_TARGET_INVALID');
+      await normalized.filePermissions.restrictFile(path);
+    }
+  } catch (error) {
     try {
       db.close();
     } catch {
       // The stable permission error remains authoritative.
     }
+    if (error instanceof DatabaseOpenError) throw error;
     fail('DATABASE_FILE_PERMISSIONS_FAILED');
   }
 

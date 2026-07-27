@@ -221,6 +221,25 @@ covering indexes, operation deduplication, and FTS5 item-search triggers are
 verified through behavior. Deleted items are absent from search and restored
 items are indexed again.
 
+The Task 4 quality pass added composite `(profile_id, id)` parent keys and
+composite child references for every owner-scoped relationship. Cross-profile
+references now fail even when both profile rows and the referenced parent
+exist. Nullable sync references retain their direct `SET NULL` action plus a
+composite ownership guard, and deletion tests verify that only the optional
+reference is cleared while its owner remains intact. The exact index contract
+now freezes every `index_xinfo` key term, collation, direction, auxiliary term,
+normalized creation SQL, and partial predicate, with behavior tests covering
+live-row rejection and replacement after tombstoning or resolution.
+
+Migration SQL is scanned before any database transaction or schema-history
+creation. The SQL-aware scanner ignores strings, comments, quoted identifiers,
+and trigger bodies, while rejecting statement-leading transaction-control,
+attachment, and detachment statements with one stable safe error. The database
+opener restricts the already-validated parent directory before native SQLite
+can create the main file or sidecars, then restricts the main file and any
+existing WAL/SHM files after configuration. A failed native close remains
+retryable and is marked complete only after native close succeeds.
+
 The initial focused RED run failed `0/21` because the opener and migration
 runner did not exist. Additional focused RED checks captured future-version
 classification, connection-endpoint uniqueness, and lazy native-dependency
@@ -230,10 +249,12 @@ relational tables were required. The populated contract now freezes every
 ordered column, named and automatic index, indexed-column order, uniqueness,
 partial-index flag, foreign-key action, migration-metadata primary key, FTS
 public column, and FTS shadow table. The PRAGMA audit found no schema mismatch,
-so migration SQL and checksums did not change. The stable root migration
-command now passes `54/54`; the complete backend suite passes `244/244`, with
-zero skips. Evidence contains no database paths, row content, or raw
-checksums.
+so the initial implementation did not change its migration bytes. The later
+quality pass intentionally updated the unreleased canonical migration bytes to
+add composite ownership constraints and parent keys. Its RED failed `24/26`
+focused checks as expected; after implementation, the stable root migration
+command passes `88/88` and the complete backend suite passes `278/278`, with
+zero skips. Evidence contains no database paths, row content, or raw checksums.
 
 `database/setup.sql` is retained only as a legacy PostgreSQL/Supabase
 reference. Canonical runtime migrations never read it, and this task does not

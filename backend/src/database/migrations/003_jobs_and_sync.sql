@@ -30,7 +30,8 @@ CREATE TABLE sync_operations (
   retry_count INTEGER NOT NULL DEFAULT 0 CHECK (retry_count >= 0),
   applied_at INTEGER CHECK (applied_at IS NULL OR applied_at >= 0),
   created_at INTEGER NOT NULL CHECK (created_at >= 0),
-  updated_at INTEGER NOT NULL CHECK (updated_at >= created_at)
+  updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
+  FOREIGN KEY (profile_id, device_id) REFERENCES sync_devices(profile_id, id)
 );
 
 CREATE TABLE sync_changes (
@@ -43,18 +44,21 @@ CREATE TABLE sync_changes (
   entity_revision INTEGER NOT NULL CHECK (entity_revision >= 1),
   change_kind TEXT NOT NULL CHECK (change_kind IN ('upsert', 'delete')),
   payload_json TEXT,
-  created_at INTEGER NOT NULL CHECK (created_at >= 0)
+  created_at INTEGER NOT NULL CHECK (created_at >= 0),
+  FOREIGN KEY (profile_id, operation_id) REFERENCES sync_operations(profile_id, id)
 );
 
 CREATE TABLE sync_cursors (
   id TEXT PRIMARY KEY CHECK (id <> ''),
   profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
-  device_id TEXT NOT NULL REFERENCES sync_devices(id) ON DELETE CASCADE,
-  peer_device_id TEXT NOT NULL REFERENCES sync_devices(id) ON DELETE CASCADE,
+  device_id TEXT NOT NULL,
+  peer_device_id TEXT NOT NULL,
   last_sequence INTEGER NOT NULL DEFAULT 0 CHECK (last_sequence >= 0),
   created_at INTEGER NOT NULL CHECK (created_at >= 0),
   updated_at INTEGER NOT NULL CHECK (updated_at >= created_at),
-  CHECK (device_id <> peer_device_id)
+  CHECK (device_id <> peer_device_id),
+  FOREIGN KEY (profile_id, device_id) REFERENCES sync_devices(profile_id, id) ON DELETE CASCADE,
+  FOREIGN KEY (profile_id, peer_device_id) REFERENCES sync_devices(profile_id, id) ON DELETE CASCADE
 );
 
 CREATE TABLE sync_conflicts (
@@ -86,6 +90,7 @@ CREATE TABLE migration_runs (
 
 CREATE INDEX idx_jobs_profile_state_available ON jobs(profile_id, state, available_at, attempts, id);
 CREATE UNIQUE INDEX uq_sync_operations_profile_operation ON sync_operations(profile_id, operation_key);
+CREATE UNIQUE INDEX uq_sync_operations_profile_id ON sync_operations(profile_id, id);
 CREATE INDEX idx_sync_operations_profile_created ON sync_operations(profile_id, state, created_at, id);
 CREATE INDEX idx_sync_operations_device_state ON sync_operations(device_id, state, created_at, id);
 CREATE UNIQUE INDEX uq_sync_changes_profile_sequence ON sync_changes(profile_id, sequence);

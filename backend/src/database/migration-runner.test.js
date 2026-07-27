@@ -291,3 +291,69 @@ test('concurrent migration writers fail safely when the configured busy timeout 
     second.close();
   }
 });
+
+test('transaction-control statements are rejected before any migration executes', async t => {
+  const { discoverMigrations, runMigrations } = require('./migration-runner');
+  const forbiddenStatements = [
+    ['BEGIN', 'BEGIN'],
+    ['COMMIT', 'COMMIT'],
+    ['END', 'END'],
+    ['ROLLBACK', 'ROLLBACK'],
+    ['SAVEPOINT', 'SAVEPOINT migration_escape'],
+    ['RELEASE', 'RELEASE migration_escape'],
+    ['ATTACH', "ATTACH DATABASE ':memory:' AS escaped"],
+    ['DETACH', 'DETACH DATABASE escaped'],
+  ];
+
+  for (const [keyword, statement] of forbiddenStatements) {
+    await t.test(keyword, () => {
+      const directory = makeMigrationDirectory({
+        '001_escape.sql': `
+          CREATE TABLE escaped_record (id TEXT PRIMARY KEY);
+          ${statement};
+          CREATE TABLE partial_record (id TEXT PRIMARY KEY);
+        `,
+      });
+      const db = memoryDatabase();
+      assertMigrationError(
+        () => runMigrations({ db, migrations: discoverMigrations({ directory }) }),
+        'MIGRATION_TRANSACTION_CONTROL'
+      );
+      assert.deepEqual(
+        db
+          .prepare(
+            `SELECT name
+             FROM sqlite_master
+             WHERE type = 'table' AND name IN ('escaped_record', 'partial_record', 'schema_migrations')
+             ORDER BY name`
+          )
+          .pluck()
+          .all(),
+        []
+      );
+      db.close();
+    });
+  }
+});
+
+test('transaction keywords inside comments, strings, and quoted identifiers remain valid SQL', () => {
+  const directory = makeMigrationDirectory({
+    '001_keywords.sql': `
+      -- COMMIT and ROLLBACK are documentation here.
+      /* BEGIN; SAVEPOINT ignored; RELEASE ignored; */
+      CREATE TABLE "BEGIN" (value TEXT NOT NULL);
+      INSERT INTO "BEGIN"(value) VALUES ('COMMIT; END; ROLLBACK;');
+      CREATE TRIGGER keyword_trigger AFTER INSERT ON "BEGIN"
+      BEGIN
+        UPDATE "BEGIN"
+        SET value = CASE WHEN NEW.value = 'ATTACH' THEN 'DETACH' ELSE NEW.value END;
+      END;
+    `,
+  });
+  const { discoverMigrations, runMigrations } = require('./migration-runner');
+  const db = memoryDatabase();
+
+  assert.deepEqual(runMigrations({ db, migrations: discoverMigrations({ directory }) }).appliedVersions, [1]);
+  assert.equal(db.prepare('SELECT value FROM "BEGIN"').pluck().get(), 'COMMIT; END; ROLLBACK;');
+  db.close();
+});

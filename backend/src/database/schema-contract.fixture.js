@@ -8,8 +8,8 @@ function automaticIndex(name, origin, ...columns) {
   return { name, unique: true, origin, partial: false, columns };
 }
 
-function foreignKey(from, table, onDelete) {
-  return { from, table, to: 'id', onUpdate: 'NO ACTION', onDelete };
+function foreignKey(from, table, onDelete, to = 'id') {
+  return { from, table, to, onUpdate: 'NO ACTION', onDelete };
 }
 
 const expectedColumns = Object.freeze({
@@ -271,6 +271,7 @@ const expectedIndexes = Object.freeze({
     namedIndex('idx_client_credentials_profile_state', false, false, 'profile_id', 'state', 'kind', 'id'),
     automaticIndex('sqlite_autoindex_client_credentials_1', 'pk', 'id'),
     automaticIndex('sqlite_autoindex_client_credentials_2', 'u', 'secret_ref'),
+    namedIndex('uq_client_credentials_profile_id', true, false, 'profile_id', 'id'),
   ],
   connections: [
     namedIndex(
@@ -325,6 +326,7 @@ const expectedIndexes = Object.freeze({
     namedIndex('idx_items_profile_kind', false, false, 'profile_id', 'kind', 'deleted_at', 'updated_at', 'id'),
     namedIndex('idx_items_profile_updated', false, false, 'profile_id', 'deleted_at', 'updated_at', 'id'),
     automaticIndex('sqlite_autoindex_items_1', 'pk', 'id'),
+    namedIndex('uq_items_profile_id', true, false, 'profile_id', 'id'),
   ],
   jobs: [
     namedIndex(
@@ -368,6 +370,7 @@ const expectedIndexes = Object.freeze({
   reminders: [
     namedIndex('idx_reminders_profile_due', false, false, 'profile_id', 'state', 'deleted_at', 'due_at', 'id'),
     automaticIndex('sqlite_autoindex_reminders_1', 'pk', 'id'),
+    namedIndex('uq_reminders_profile_id', true, false, 'profile_id', 'id'),
   ],
   research_jobs: [
     namedIndex(
@@ -421,55 +424,110 @@ const expectedIndexes = Object.freeze({
   sync_devices: [
     namedIndex('idx_sync_devices_profile_state', false, false, 'profile_id', 'state', 'deleted_at', 'updated_at', 'id'),
     automaticIndex('sqlite_autoindex_sync_devices_1', 'pk', 'id'),
+    namedIndex('uq_sync_devices_profile_id', true, false, 'profile_id', 'id'),
   ],
   sync_operations: [
     namedIndex('idx_sync_operations_device_state', false, false, 'device_id', 'state', 'created_at', 'id'),
     namedIndex('idx_sync_operations_profile_created', false, false, 'profile_id', 'state', 'created_at', 'id'),
     namedIndex('uq_sync_operations_profile_operation', true, false, 'profile_id', 'operation_key'),
     automaticIndex('sqlite_autoindex_sync_operations_1', 'pk', 'id'),
+    namedIndex('uq_sync_operations_profile_id', true, false, 'profile_id', 'id'),
   ],
   tags: [
     namedIndex('idx_tags_profile_name', false, false, 'profile_id', 'deleted_at', 'normalized_name', 'id'),
     namedIndex('uq_tags_live_name', true, true, 'profile_id', 'normalized_name'),
     automaticIndex('sqlite_autoindex_tags_1', 'pk', 'id'),
+    namedIndex('uq_tags_profile_id', true, false, 'profile_id', 'id'),
   ],
 });
 
 const profileCascade = foreignKey('profile_id', 'profiles', 'CASCADE');
 const expectedForeignKeys = Object.freeze({
-  bookmarks: [foreignKey('item_id', 'items', 'CASCADE'), profileCascade],
-  browser_sessions: [foreignKey('credential_id', 'client_credentials', 'CASCADE'), profileCascade],
+  bookmarks: [
+    foreignKey('item_id', 'items', 'CASCADE'),
+    foreignKey('profile_id', 'items', 'CASCADE', 'profile_id'),
+    profileCascade,
+  ],
+  browser_sessions: [
+    foreignKey('credential_id', 'client_credentials', 'CASCADE'),
+    foreignKey('profile_id', 'client_credentials', 'CASCADE', 'profile_id'),
+    profileCascade,
+  ],
   client_credentials: [profileCascade],
   connections: [
+    foreignKey('profile_id', 'items', 'CASCADE', 'profile_id'),
+    foreignKey('profile_id', 'items', 'CASCADE', 'profile_id'),
     profileCascade,
     foreignKey('source_item_id', 'items', 'CASCADE'),
     foreignKey('target_item_id', 'items', 'CASCADE'),
   ],
   diagnostics: [profileCascade],
   digests: [profileCascade],
-  flashcards: [foreignKey('item_id', 'items', 'CASCADE'), profileCascade],
-  highlights: [foreignKey('item_id', 'items', 'CASCADE'), profileCascade],
-  item_tags: [foreignKey('item_id', 'items', 'CASCADE'), profileCascade, foreignKey('tag_id', 'tags', 'CASCADE')],
+  flashcards: [
+    foreignKey('item_id', 'items', 'CASCADE'),
+    foreignKey('profile_id', 'items', 'CASCADE', 'profile_id'),
+    profileCascade,
+  ],
+  highlights: [
+    foreignKey('item_id', 'items', 'CASCADE'),
+    foreignKey('profile_id', 'items', 'CASCADE', 'profile_id'),
+    profileCascade,
+  ],
+  item_tags: [
+    foreignKey('item_id', 'items', 'CASCADE'),
+    foreignKey('profile_id', 'tags', 'CASCADE', 'profile_id'),
+    foreignKey('profile_id', 'items', 'CASCADE', 'profile_id'),
+    profileCascade,
+    foreignKey('tag_id', 'tags', 'CASCADE'),
+  ],
   items: [profileCascade],
   jobs: [profileCascade],
   migration_runs: [foreignKey('profile_id', 'profiles', 'SET NULL')],
-  notes: [foreignKey('item_id', 'items', 'CASCADE'), profileCascade],
+  notes: [
+    foreignKey('item_id', 'items', 'CASCADE'),
+    foreignKey('profile_id', 'items', 'CASCADE', 'profile_id'),
+    profileCascade,
+  ],
   profiles: [],
-  quiz_results: [foreignKey('item_id', 'items', 'CASCADE'), profileCascade],
-  reminder_deliveries: [profileCascade, foreignKey('reminder_id', 'reminders', 'CASCADE')],
-  reminders: [foreignKey('item_id', 'items', 'CASCADE'), profileCascade],
+  quiz_results: [
+    foreignKey('item_id', 'items', 'CASCADE'),
+    foreignKey('profile_id', 'items', 'CASCADE', 'profile_id'),
+    profileCascade,
+  ],
+  reminder_deliveries: [
+    foreignKey('profile_id', 'reminders', 'CASCADE', 'profile_id'),
+    profileCascade,
+    foreignKey('reminder_id', 'reminders', 'CASCADE'),
+  ],
+  reminders: [
+    foreignKey('item_id', 'items', 'CASCADE'),
+    foreignKey('profile_id', 'items', 'CASCADE', 'profile_id'),
+    profileCascade,
+  ],
   research_jobs: [profileCascade],
   schema_migrations: [],
   settings: [profileCascade],
-  sync_changes: [foreignKey('operation_id', 'sync_operations', 'SET NULL'), profileCascade],
+  sync_changes: [
+    foreignKey('operation_id', 'sync_operations', 'NO ACTION'),
+    foreignKey('operation_id', 'sync_operations', 'SET NULL'),
+    foreignKey('profile_id', 'sync_operations', 'NO ACTION', 'profile_id'),
+    profileCascade,
+  ],
   sync_conflicts: [profileCascade],
   sync_cursors: [
     foreignKey('device_id', 'sync_devices', 'CASCADE'),
     foreignKey('peer_device_id', 'sync_devices', 'CASCADE'),
+    foreignKey('profile_id', 'sync_devices', 'CASCADE', 'profile_id'),
+    foreignKey('profile_id', 'sync_devices', 'CASCADE', 'profile_id'),
     profileCascade,
   ],
   sync_devices: [profileCascade],
-  sync_operations: [foreignKey('device_id', 'sync_devices', 'SET NULL'), profileCascade],
+  sync_operations: [
+    foreignKey('device_id', 'sync_devices', 'NO ACTION'),
+    foreignKey('device_id', 'sync_devices', 'SET NULL'),
+    foreignKey('profile_id', 'sync_devices', 'NO ACTION', 'profile_id'),
+    profileCascade,
+  ],
   tags: [profileCascade],
 });
 
@@ -484,11 +542,61 @@ const expectedMigrationMetadata = Object.freeze([
   { name: 'checksum', type: 'TEXT', notnull: 1, pk: 0 },
   { name: 'applied_at', type: 'INTEGER', notnull: 1, pk: 0 },
 ]);
+const descendingIndexTerms = Object.freeze({
+  idx_bookmarks_profile_updated: ['updated_at'],
+  idx_connections_profile_target: ['updated_at'],
+  idx_digests_profile_period: ['period_end'],
+  idx_items_profile_kind: ['updated_at'],
+  idx_items_profile_updated: ['updated_at'],
+  idx_notes_profile_item: ['updated_at'],
+  idx_quiz_results_profile_completed: ['completed_at'],
+  idx_sync_changes_profile_entity: ['entity_revision'],
+  idx_sync_devices_profile_state: ['updated_at'],
+});
+
+const partialIndexPredicates = Object.freeze({
+  uq_bookmarks_live_item: 'deleted_at IS NULL',
+  uq_connections_live_endpoints: 'deleted_at IS NULL',
+  uq_item_tags_live: 'deleted_at IS NULL',
+  uq_settings_live_key: 'deleted_at IS NULL',
+  uq_sync_conflicts_open_entity: "state = 'open'",
+  uq_tags_live_name: 'deleted_at IS NULL',
+});
+
+function expectedIndexDetail(table, index) {
+  const descending = new Set(descendingIndexTerms[index.name] ?? []);
+  const terms = index.columns.map(name => ({
+    name,
+    collation: 'BINARY',
+    descending: descending.has(name),
+    key: true,
+  }));
+  terms.push({ name: null, collation: 'BINARY', descending: false, key: false });
+
+  let sql = null;
+  if (index.origin === 'c') {
+    const columns = index.columns.map(name => `${name}${descending.has(name) ? ' DESC' : ''}`).join(', ');
+    const predicate = partialIndexPredicates[index.name];
+    sql = `CREATE${index.unique ? ' UNIQUE' : ''} INDEX ${index.name} ON ${table}(${columns})${
+      predicate === undefined ? '' : ` WHERE ${predicate}`
+    }`;
+  }
+  return { sql, terms };
+}
+
+const expectedIndexDetails = Object.freeze(
+  Object.fromEntries(
+    Object.entries(expectedIndexes).flatMap(([table, indexes]) =>
+      indexes.map(index => [index.name, expectedIndexDetail(table, index)])
+    )
+  )
+);
 
 module.exports = {
   expectedColumns,
   expectedForeignKeys,
   expectedFtsContract,
   expectedIndexes,
+  expectedIndexDetails,
   expectedMigrationMetadata,
 };
