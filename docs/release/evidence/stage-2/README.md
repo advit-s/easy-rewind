@@ -142,12 +142,19 @@ target remains untouched.
 Protected-secret and restrictive-file-permission interfaces normalize and
 validate their inputs, preserve secret values without logging them, and
 sanitize adapter failures. The Node file-permission adapter accepts injected
-filesystem and command adapters. POSIX mode changes are verified as `0700`
-for directories and `0600` for files. The Windows adapter rejects links,
-requires a validated SID, and invokes a fixed `icacls.exe` executable with the
-exact target in a separate argument, shell execution disabled, and explicit
-failure for unsuccessful or malformed results. No module under `backend/src`
-imports Electron.
+filesystem and locked-target security adapters. Every operation requires an
+exact trusted root, rejects linked or reparse-point ancestry, and verifies
+that the locked object identity matches the inspected target. POSIX changes
+use no-follow file handles, apply `fchmod`, verify `0700` for directories or
+`0600` for files with `fstat`, and close the handle on every path. A target
+swap regression proves an external file retains mode `0666` and its sentinel
+content. The Windows adapter requires a validated SID and a handle-bound
+structured ACL adapter. It applies and reads back one protected DACL whose
+only ACE grants full control to that SID, with inheritance flags only for
+directories; unexpected owners, inherited ACEs, deny ACEs, extra principals,
+ambiguous readback, or identity changes fail closed. A command-only Windows
+fallback now returns `FILE_PERMISSION_LOCK_UNAVAILABLE` without mutation. No
+module under `backend/src` imports Electron.
 
 The sanitized RED runs failed only because the configuration and platform
 modules did not yet exist (`0/56` configuration assertions and `0/14`
@@ -155,10 +162,21 @@ top-level platform assertions). The manifest-contract RED run passed `5/6`
 and failed on the missing root backend-suite script. A later focused RED
 regression proved a dangling junction bypassed the initial existence check
 (`0/1`); the link inspection now uses `lstat` first and sanitizes inspection
-failures. After implementation, the focused configuration run passes `57/57`,
-the focused platform run passes `31/31` including nested cases, the manifest
-contract passes `6/6`, and the complete backend suite passes `173/173` with
-zero skips.
+failures. Follow-up RED runs demonstrated that command exit status alone
+accepted eight unsafe or ambiguous ACL readbacks (`0/10`), linked ancestry and
+path swaps reached mutation (`0/3`), and trusted-root, dangling-link, and
+injected-reparse constraints were absent (`0/4`). After implementation, the
+focused configuration run passes `57/57`, the focused platform run passes
+`48/48` including nested cases, the manifest contract passes `6/6`, and the
+complete backend suite passes `190/190` with zero skips.
+
+Node does not expose a native Windows API for applying and reading an ACL
+through the same locked file handle. Task 3 therefore defines and verifies
+the required `windowsSecurity.withLockedTarget` boundary and refuses to claim
+race-safe success from `icacls` alone. Implementing that native helper and
+validating its ACL/owner readback on packaged Windows artifacts remains an
+explicit Stage 6 platform-integration requirement; Task 3 fixture coverage is
+required and has no skip.
 
 Task 3 changed no dependency versions. The last verified Task 2 production
 audit remains `0` vulnerabilities, while the last verified Task 2 full
