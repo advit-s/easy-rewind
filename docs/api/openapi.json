@@ -376,6 +376,9 @@
           "oneUse": {
             "const": true
           },
+          "qrPayload": {
+            "$ref": "#/components/schemas/PairingQrPayload"
+          },
           "status": {
             "const": "pending_confirmation"
           }
@@ -384,7 +387,8 @@
           "challengeId",
           "expiresAt",
           "status",
-          "oneUse"
+          "oneUse",
+          "qrPayload"
         ],
         "type": "object",
         "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pairing.json#/$defs/PairingChallengeResponse"
@@ -461,6 +465,43 @@
         "type": "object",
         "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pairing.json#/$defs/PairingCredentialResponse"
       },
+      "PairingQrPayload": {
+        "additionalProperties": false,
+        "properties": {
+          "challengeId": {
+            "$ref": "#/components/schemas/OpaqueId"
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          },
+          "installationId": {
+            "$ref": "#/components/schemas/OpaqueId"
+          },
+          "protocolVersion": {
+            "$ref": "#/components/schemas/ProtocolVersion"
+          },
+          "syncEndpoint": {
+            "maxLength": 512,
+            "minLength": 20,
+            "pattern": "^https://",
+            "type": "string"
+          },
+          "tlsFingerprint": {
+            "pattern": "^sha256:[a-f0-9]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "protocolVersion",
+          "syncEndpoint",
+          "tlsFingerprint",
+          "installationId",
+          "challengeId",
+          "expiresAt"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pairing.json#/$defs/PairingQrPayload"
+      },
       "PairingRevokeRequest": {
         "additionalProperties": false,
         "properties": {
@@ -503,6 +544,17 @@
         ],
         "type": "object",
         "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pairing.json#/$defs/PairingRevokeResponse"
+      },
+      "PositiveSafeInteger": {
+        "maximum": 9007199254740991,
+        "minimum": 1,
+        "type": "integer",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/PositiveSafeInteger"
+      },
+      "ProtocolVersion": {
+        "const": "1",
+        "type": "string",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/ProtocolVersion"
       },
       "Reminder": {
         "additionalProperties": false,
@@ -641,6 +693,12 @@
         "minimum": 0,
         "type": "integer",
         "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Revision"
+      },
+      "SchemaVersion": {
+        "maximum": 2147483647,
+        "minimum": 1,
+        "type": "integer",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/SchemaVersion"
       },
       "SyncChange": {
         "additionalProperties": false,
@@ -809,6 +867,9 @@
           "deviceId": {
             "$ref": "#/components/schemas/Uuid"
           },
+          "deviceSequence": {
+            "$ref": "#/components/schemas/PositiveSafeInteger"
+          },
           "entityId": {
             "$ref": "#/components/schemas/Uuid"
           },
@@ -830,6 +891,12 @@
           },
           "payload": {
             "$ref": "#/components/schemas/SyncPayload"
+          },
+          "protocolVersion": {
+            "$ref": "#/components/schemas/ProtocolVersion"
+          },
+          "schemaVersion": {
+            "$ref": "#/components/schemas/SchemaVersion"
           }
         },
         "required": [
@@ -839,6 +906,9 @@
           "entityId",
           "kind",
           "baseRevision",
+          "deviceSequence",
+          "schemaVersion",
+          "protocolVersion",
           "payload",
           "occurredAt"
         ],
@@ -951,6 +1021,84 @@
       },
       "SyncPushResult": {
         "additionalProperties": false,
+        "oneOf": [
+          {
+            "properties": {
+              "conflictId": false,
+              "errorCode": false,
+              "revision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "status": {
+                "const": "accepted"
+              }
+            },
+            "required": [
+              "status",
+              "revision"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "conflictId": false,
+              "errorCode": false,
+              "revision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "status": {
+                "const": "duplicate"
+              }
+            },
+            "required": [
+              "status",
+              "revision"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "conflictId": {
+                "$ref": "#/components/schemas/Uuid"
+              },
+              "errorCode": false,
+              "revision": {
+                "$ref": "#/components/schemas/Revision"
+              },
+              "status": {
+                "const": "conflict"
+              }
+            },
+            "required": [
+              "status",
+              "revision",
+              "conflictId"
+            ],
+            "type": "object"
+          },
+          {
+            "properties": {
+              "conflictId": false,
+              "errorCode": {
+                "enum": [
+                  "validation_failed",
+                  "conflict",
+                  "device_revoked"
+                ],
+                "type": "string"
+              },
+              "revision": false,
+              "status": {
+                "const": "rejected"
+              }
+            },
+            "required": [
+              "status",
+              "errorCode"
+            ],
+            "type": "object"
+          }
+        ],
         "properties": {
           "conflictId": {
             "$ref": "#/components/schemas/Uuid"

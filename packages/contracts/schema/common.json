@@ -28,6 +28,20 @@
       "minimum": 0,
       "maximum": 2147483647
     },
+    "PositiveSafeInteger": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "SchemaVersion": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 2147483647
+    },
+    "ProtocolVersion": {
+      "type": "string",
+      "const": "1"
+    },
     "JsonPrimitive": {
       "anyOf": [
         {

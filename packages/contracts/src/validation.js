@@ -48,26 +48,18 @@ function schemaErrors(errors) {
 
 export function inspectJsonValue(value, { maxDepth = 32, maxCharacters = 262_144 } = {}) {
   const seen = new Set();
-  let characters = 0;
 
   function visit(current, depth) {
     if (depth > maxDepth) return false;
-    if (current === null) {
-      characters += 4;
-      return characters <= maxCharacters;
-    }
+    if (current === null) return true;
 
     switch (typeof current) {
       case 'string':
-        characters += current.length + 2;
-        return characters <= maxCharacters;
+        return true;
       case 'number':
-        if (!Number.isFinite(current)) return false;
-        characters += String(current).length;
-        return characters <= maxCharacters;
+        return Number.isFinite(current);
       case 'boolean':
-        characters += current ? 4 : 5;
-        return characters <= maxCharacters;
+        return true;
       case 'object':
         break;
       default:
@@ -76,28 +68,43 @@ export function inspectJsonValue(value, { maxDepth = 32, maxCharacters = 262_144
 
     if (seen.has(current)) return false;
     seen.add(current);
-    characters += 2;
 
     if (Array.isArray(current)) {
-      for (const entry of current) {
-        characters += 1;
-        if (!visit(entry, depth + 1)) return false;
+      const keys = Object.keys(current);
+      if (keys.length !== current.length || keys.some((key, index) => key !== String(index))) {
+        return false;
+      }
+      for (const key of keys) {
+        const descriptor = Object.getOwnPropertyDescriptor(current, key);
+        if (!descriptor || !Object.hasOwn(descriptor, 'value')) return false;
+        if (!visit(descriptor.value, depth + 1)) return false;
       }
     } else {
       const prototype = Object.getPrototypeOf(current);
       if (prototype !== Object.prototype && prototype !== null) return false;
-      for (const key of Object.keys(current)) {
+      const keys = Reflect.ownKeys(current);
+      if (keys.some(key => typeof key !== 'string')) return false;
+      for (const key of keys) {
         if (FORBIDDEN_JSON_KEYS.has(key)) return false;
-        characters += key.length + 3;
-        if (!visit(current[key], depth + 1)) return false;
+        const descriptor = Object.getOwnPropertyDescriptor(current, key);
+        if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
+          return false;
+        }
+        if (!visit(descriptor.value, depth + 1)) return false;
       }
     }
 
     seen.delete(current);
-    return characters <= maxCharacters;
+    return true;
   }
 
-  return visit(value, 0);
+  try {
+    if (!visit(value, 0)) return false;
+    const serialized = JSON.stringify(value);
+    return typeof serialized === 'string' && serialized.length <= maxCharacters;
+  } catch {
+    return false;
+  }
 }
 
 export function createSchemaValidator(schemaReference, options = {}) {

@@ -31,6 +31,9 @@
         "entityId",
         "kind",
         "baseRevision",
+        "deviceSequence",
+        "schemaVersion",
+        "protocolVersion",
         "payload",
         "occurredAt"
       ],
@@ -53,6 +56,15 @@
         },
         "baseRevision": {
           "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Revision"
+        },
+        "deviceSequence": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/PositiveSafeInteger"
+        },
+        "schemaVersion": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/SchemaVersion"
+        },
+        "protocolVersion": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/ProtocolVersion"
         },
         "payload": {
           "$ref": "#/$defs/SyncPayload"
@@ -123,7 +135,68 @@
           "type": "string",
           "enum": ["validation_failed", "conflict", "device_revoked"]
         }
-      }
+      },
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["status", "revision"],
+          "properties": {
+            "status": {
+              "const": "accepted"
+            },
+            "revision": {
+              "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Revision"
+            },
+            "conflictId": false,
+            "errorCode": false
+          }
+        },
+        {
+          "type": "object",
+          "required": ["status", "revision"],
+          "properties": {
+            "status": {
+              "const": "duplicate"
+            },
+            "revision": {
+              "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Revision"
+            },
+            "conflictId": false,
+            "errorCode": false
+          }
+        },
+        {
+          "type": "object",
+          "required": ["status", "revision", "conflictId"],
+          "properties": {
+            "status": {
+              "const": "conflict"
+            },
+            "revision": {
+              "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Revision"
+            },
+            "conflictId": {
+              "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+            },
+            "errorCode": false
+          }
+        },
+        {
+          "type": "object",
+          "required": ["status", "errorCode"],
+          "properties": {
+            "status": {
+              "const": "rejected"
+            },
+            "revision": false,
+            "conflictId": false,
+            "errorCode": {
+              "type": "string",
+              "enum": ["validation_failed", "conflict", "device_revoked"]
+            }
+          }
+        }
+      ]
     },
     "SyncPushResponse": {
       "type": "object",

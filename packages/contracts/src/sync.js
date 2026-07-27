@@ -5,6 +5,10 @@ const SYNC_SCHEMA_ID = 'https://contracts.easy-rewind.invalid/schema/sync.json';
 export const MAX_SYNC_BATCH_SIZE = 100;
 export const MAX_SYNC_PAYLOAD_DEPTH = 8;
 export const MAX_SYNC_PAYLOAD_CHARACTERS = 32_768;
+export const MAX_DEVICE_SEQUENCE = Number.MAX_SAFE_INTEGER;
+export const MIN_SYNC_SCHEMA_VERSION = 1;
+export const MAX_SYNC_SCHEMA_VERSION = 2_147_483_647;
+export const SYNC_PROTOCOL_VERSION = '1';
 export const SYNC_OPERATION_KINDS = Object.freeze(['upsert', 'delete']);
 export const SYNC_ENTITY_TYPES = Object.freeze([
   'item',
@@ -38,6 +42,21 @@ function uniqueBy(values, key) {
   return true;
 }
 
+function validPushSequence(deviceId, operations) {
+  let previousSequence = 0;
+  for (const operation of operations) {
+    if (
+      operation?.deviceId !== deviceId ||
+      !Number.isSafeInteger(operation.deviceSequence) ||
+      operation.deviceSequence <= previousSequence
+    ) {
+      return false;
+    }
+    previousSequence = operation.deviceSequence;
+  }
+  return true;
+}
+
 export const validateSyncOperation = createSchemaValidator(`${SYNC_SCHEMA_ID}#/$defs/SyncOperation`, {
   prevalidate(value) {
     return value !== null && typeof value === 'object' && validPayload(value.payload);
@@ -51,7 +70,8 @@ export const validateSyncPushRequest = createSchemaValidator(`${SYNC_SCHEMA_ID}#
       typeof value === 'object' &&
       Array.isArray(value.operations) &&
       value.operations.every(operation => validPayload(operation?.payload)) &&
-      uniqueBy(value.operations, 'operationId')
+      uniqueBy(value.operations, 'operationId') &&
+      validPushSequence(value.deviceId, value.operations)
     );
   },
 });
@@ -74,7 +94,9 @@ export const validateSyncPullResponse = createSchemaValidator(`${SYNC_SCHEMA_ID}
     );
   },
   postvalidate(value) {
-    return value.hasMore ? value.nextCursor !== null : value.nextCursor === null;
+    return (
+      uniqueBy(value.changes, 'changeId') && (value.hasMore ? value.nextCursor !== null : value.nextCursor === null)
+    );
   },
 });
 

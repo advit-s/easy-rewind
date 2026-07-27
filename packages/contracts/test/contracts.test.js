@@ -14,6 +14,16 @@ function ownKeyObject(key) {
   return JSON.parse(`{"${key}":{"polluted":true}}`);
 }
 
+function payloadWithExactJsonLength(length) {
+  const payload = Object.fromEntries(
+    Array.from({ length: 64 }, (_, index) => [`p${String(index).padStart(2, '0')}`, ''])
+  );
+  const emptyLength = JSON.stringify(payload).length;
+  payload.p63 = 'x'.repeat(length - emptyLength);
+  assert.equal(JSON.stringify(payload).length, length);
+  return payload;
+}
+
 test('public contract entry point exists and exposes every frozen module', async () => {
   const api = await contracts();
 
@@ -284,12 +294,76 @@ test('pairing schemas require one-use expiry, explicit confirmation, and isolate
   assert.equal(validatePairingRevokeRequest({ deviceId: ids.device, reason: 'arbitrary_reason' }).valid, false);
 });
 
+test('pairing QR payload accepts only authenticated private-network sync endpoints', async () => {
+  const { validatePairingChallengeResponse } = await contracts();
+  assert.equal(validatePairingChallengeResponse(validFixtures.pairingChallengeResponse).valid, true);
+
+  for (const syncEndpoint of [
+    'https://10.1.2.3:9443/v1/sync',
+    'https://172.16.0.4:9443/v1/sync',
+    'https://[fd12:3456::1]:9443/v1/sync',
+    'https://easy-rewind-pc.local:9443/v1/sync',
+  ]) {
+    const fixture = clone(validFixtures.pairingChallengeResponse);
+    fixture.qrPayload.syncEndpoint = syncEndpoint;
+    assert.equal(validatePairingChallengeResponse(fixture).valid, true, syncEndpoint);
+  }
+
+  for (const syncEndpoint of [
+    'https://8.8.8.8:9443/v1/sync',
+    'https://172.32.0.4:9443/v1/sync',
+    'https://[2001:db8::1]:9443/v1/sync',
+    'http://192.168.1.20:9443/v1/sync',
+    'https://user:password@192.168.1.20:9443/v1/sync',
+    'https://192.168.1.20/v1/sync',
+    'https://192.168.1.20:9443/v1/sync?token=value',
+    'https://192.168.1.20:9443/v1/sync#fragment',
+  ]) {
+    const fixture = clone(validFixtures.pairingChallengeResponse);
+    fixture.qrPayload.syncEndpoint = syncEndpoint;
+    assert.equal(validatePairingChallengeResponse(fixture).valid, false, syncEndpoint);
+  }
+
+  for (const tlsFingerprint of ['sha256:abcd', `sha256:${'AB'.repeat(32)}`, `sha1:${'ab'.repeat(32)}`]) {
+    const fixture = clone(validFixtures.pairingChallengeResponse);
+    fixture.qrPayload.tlsFingerprint = tlsFingerprint;
+    assert.equal(validatePairingChallengeResponse(fixture).valid, false, tlsFingerprint);
+  }
+
+  for (const [field, value] of [
+    ['installationId', 'short'],
+    ['challengeId', 'challenge_DifferentOpaqueIdentifier'],
+    ['expiresAt', 1_800_000_000_001],
+  ]) {
+    const fixture = clone(validFixtures.pairingChallengeResponse);
+    fixture.qrPayload[field] = value;
+    assert.equal(validatePairingChallengeResponse(fixture).valid, false, field);
+  }
+
+  const nestedUnknown = clone(validFixtures.pairingChallengeResponse);
+  nestedUnknown.qrPayload.unexpected = true;
+  assert.equal(validatePairingChallengeResponse(nestedUnknown).valid, false);
+});
+
 test('sync operation envelopes enforce vocabularies, bounds, and delete semantics', async () => {
-  const { SYNC_ENTITY_TYPES, SYNC_OPERATION_KINDS, validateSyncOperation } = await contracts();
+  const { SYNC_ENTITY_TYPES, SYNC_OPERATION_KINDS, SYNC_PROTOCOL_VERSION, validateSyncOperation } = await contracts();
   assert.deepEqual(SYNC_OPERATION_KINDS, ['upsert', 'delete']);
+  assert.equal(SYNC_PROTOCOL_VERSION, '1');
   assert.ok(SYNC_ENTITY_TYPES.includes('reminder'));
 
-  for (const field of ['operationId', 'deviceId', 'entityType', 'entityId', 'kind', 'payload']) {
+  for (const field of [
+    'operationId',
+    'deviceId',
+    'entityType',
+    'entityId',
+    'kind',
+    'baseRevision',
+    'deviceSequence',
+    'schemaVersion',
+    'protocolVersion',
+    'payload',
+    'occurredAt',
+  ]) {
     const fixture = clone(validFixtures.operation);
     delete fixture[field];
     assert.equal(validateSyncOperation(fixture).valid, false, field);
@@ -300,6 +374,13 @@ test('sync operation envelopes enforce vocabularies, bounds, and delete semantic
     ['entityType', 'database_row'],
     ['kind', 'patch'],
     ['baseRevision', -1],
+    ['deviceSequence', 0],
+    ['deviceSequence', 1.5],
+    ['deviceSequence', Number.MAX_SAFE_INTEGER + 1],
+    ['schemaVersion', 0],
+    ['schemaVersion', 1.5],
+    ['protocolVersion', 1],
+    ['protocolVersion', '2'],
     ['occurredAt', 1.5],
   ]) {
     const fixture = clone(validFixtures.operation);
@@ -315,7 +396,18 @@ test('sync operation envelopes enforce vocabularies, bounds, and delete semantic
   assert.equal(validateSyncOperation(deletion).valid, false);
 });
 
-test('sync payloads reject prototype-pollution keys, excessive depth, and excessive size', async () => {
+test('sync payload bounds use exact serialized JSON length at the 32768 boundary', async () => {
+  const { MAX_SYNC_PAYLOAD_CHARACTERS, validateSyncOperation } = await contracts();
+  const exact = clone(validFixtures.operation);
+  exact.payload = payloadWithExactJsonLength(MAX_SYNC_PAYLOAD_CHARACTERS);
+  assert.equal(validateSyncOperation(exact).valid, true);
+
+  const oversized = clone(validFixtures.operation);
+  oversized.payload = payloadWithExactJsonLength(MAX_SYNC_PAYLOAD_CHARACTERS + 1);
+  assert.equal(validateSyncOperation(oversized).valid, false);
+});
+
+test('sync payloads reject prototype-pollution keys, excessive depth, and non-JSON values', async () => {
   const { MAX_SYNC_PAYLOAD_DEPTH, MAX_SYNC_PAYLOAD_CHARACTERS, validateSyncOperation } = await contracts();
 
   for (const key of ['__proto__', 'constructor', 'prototype']) {
@@ -337,9 +429,47 @@ test('sync payloads reject prototype-pollution keys, excessive depth, and excess
   const largeFixture = clone(validFixtures.operation);
   largeFixture.payload = { value: 'x'.repeat(MAX_SYNC_PAYLOAD_CHARACTERS) };
   assert.equal(validateSyncOperation(largeFixture).valid, false);
+
+  const circularFixture = clone(validFixtures.operation);
+  circularFixture.payload = {};
+  circularFixture.payload.self = circularFixture.payload;
+  assert.doesNotThrow(() => validateSyncOperation(circularFixture));
+  assert.equal(validateSyncOperation(circularFixture).valid, false);
+
+  const nonJsonFixture = clone(validFixtures.operation);
+  nonJsonFixture.payload = { value: undefined };
+  assert.equal(validateSyncOperation(nonJsonFixture).valid, false);
+
+  const bigintFixture = clone(validFixtures.operation);
+  bigintFixture.payload = { value: 1n };
+  assert.doesNotThrow(() => validateSyncOperation(bigintFixture));
+  assert.equal(validateSyncOperation(bigintFixture).valid, false);
+
+  const accessorFixture = clone(validFixtures.operation);
+  accessorFixture.payload = {};
+  Object.defineProperty(accessorFixture.payload, 'value', {
+    enumerable: true,
+    get() {
+      throw new Error('must not be invoked');
+    },
+  });
+  assert.doesNotThrow(() => validateSyncOperation(accessorFixture));
+  assert.equal(validateSyncOperation(accessorFixture).valid, false);
+
+  const hostileFixture = clone(validFixtures.operation);
+  hostileFixture.payload = new Proxy(
+    {},
+    {
+      ownKeys() {
+        throw new Error('must be contained');
+      },
+    }
+  );
+  assert.doesNotThrow(() => validateSyncOperation(hostileFixture));
+  assert.equal(validateSyncOperation(hostileFixture).valid, false);
 });
 
-test('sync batches are bounded and reject duplicate operation identifiers', async () => {
+test('sync batches bind device identity and require strictly increasing device sequences', async () => {
   const { MAX_SYNC_BATCH_SIZE, validateSyncPushRequest, validateSyncPushResponse } = await contracts();
   const operation = clone(validFixtures.operation);
   assert.equal(validateSyncPushRequest({ deviceId: ids.device, operations: [operation] }).valid, true);
@@ -350,6 +480,7 @@ test('sync batches are bounded and reject duplicate operation identifiers', asyn
       operations: Array.from({ length: MAX_SYNC_BATCH_SIZE + 1 }, (_, index) => ({
         ...clone(operation),
         operationId: `${index.toString(16).padStart(8, '0')}-9dad-4d1f-80b4-00c04fd430c8`,
+        deviceSequence: index + 1,
       })),
     }).valid,
     false
@@ -358,6 +489,27 @@ test('sync batches are bounded and reject duplicate operation identifiers', asyn
     validateSyncPushRequest({ deviceId: ids.device, operations: [operation, clone(operation)] }).valid,
     false
   );
+
+  const secondOperation = {
+    ...clone(operation),
+    operationId: ids.operation2,
+    deviceSequence: 2,
+  };
+  assert.equal(
+    validateSyncPushRequest({
+      deviceId: ids.device,
+      operations: [operation, secondOperation],
+    }).valid,
+    true
+  );
+
+  for (const operations of [
+    [{ ...operation, deviceId: ids.profile }],
+    [operation, { ...secondOperation, deviceSequence: 1 }],
+    [secondOperation, operation],
+  ]) {
+    assert.equal(validateSyncPushRequest({ deviceId: ids.device, operations }).valid, false);
+  }
 
   const response = {
     results: [{ operationId: ids.operation, status: 'accepted', revision: 1 }],
@@ -368,6 +520,40 @@ test('sync batches are bounded and reject duplicate operation identifiers', asyn
     validateSyncPushResponse({ ...response, results: [...response.results, ...response.results] }).valid,
     false
   );
+});
+
+test('sync push results enforce status-specific fields without ambiguous envelopes', async () => {
+  const { validateSyncPushResponse } = await contracts();
+  const result = (status, fields = {}) => ({
+    results: [{ operationId: ids.operation, status, ...fields }],
+    serverTime: 1_700_000_000_000,
+  });
+
+  assert.equal(validateSyncPushResponse(result('accepted', { revision: 1 })).valid, true);
+  assert.equal(validateSyncPushResponse(result('accepted')).valid, false);
+  assert.equal(validateSyncPushResponse(result('accepted', { revision: 1, conflictId: ids.conflict })).valid, false);
+
+  assert.equal(validateSyncPushResponse(result('conflict', { revision: 2, conflictId: ids.conflict })).valid, true);
+  assert.equal(validateSyncPushResponse(result('conflict', { conflictId: ids.conflict })).valid, false);
+  assert.equal(
+    validateSyncPushResponse(
+      result('conflict', {
+        revision: 2,
+        conflictId: ids.conflict,
+        errorCode: 'conflict',
+      })
+    ).valid,
+    false
+  );
+
+  assert.equal(validateSyncPushResponse(result('rejected', { errorCode: 'validation_failed' })).valid, true);
+  assert.equal(validateSyncPushResponse(result('rejected')).valid, false);
+  assert.equal(
+    validateSyncPushResponse(result('rejected', { errorCode: 'validation_failed', revision: 2 })).valid,
+    false
+  );
+  assert.equal(validateSyncPushResponse(result('duplicate', { revision: 2 })).valid, true);
+  assert.equal(validateSyncPushResponse(result('duplicate')).valid, false);
 });
 
 test('sync pull, conflict, tombstone, and cursor-expiry forms are frozen', async () => {
@@ -403,23 +589,10 @@ test('sync pull, conflict, tombstone, and cursor-expiry forms are frozen', async
   };
   assert.equal(validateSyncConflict(conflict).valid, true);
 
-  const pull = {
-    changes: [
-      {
-        changeId: ids.operation2,
-        entityType: 'reminder',
-        entityId: ids.entity,
-        kind: 'delete',
-        revision: 3,
-        payload: {},
-        changedAt: 1_700_000_000_000,
-      },
-    ],
-    nextCursor: null,
-    hasMore: false,
-    serverTime: 1_700_000_000_000,
-  };
+  const pull = clone(validFixtures.syncPullResponse);
   assert.equal(validateSyncPullResponse(pull).valid, true);
+  pull.changes.push(clone(pull.changes[0]));
+  assert.equal(validateSyncPullResponse(pull).valid, false);
 
   const cursorExpired = clone(validFixtures.error);
   cursorExpired.error.code = 'cursor_expired';
@@ -439,7 +612,8 @@ test('all canonical schemas use unique identifiers and close every contract obje
     if (
       node.type === 'object' &&
       !location.endsWith(':$.$defs.JsonObject') &&
-      !location.endsWith(':$.$defs.PaginationItem')
+      !location.endsWith(':$.$defs.PaginationItem') &&
+      !location.includes('.oneOf.')
     ) {
       assert.equal(node.additionalProperties, false, `${location} is not closed`);
     }

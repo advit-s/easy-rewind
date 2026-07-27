@@ -284,14 +284,30 @@ Reminder states are exactly `scheduled`, `snoozed`, `due`, `completed`,
 terminal. Pairing contracts separate short-lived one-use challenges, explicit
 PC confirmation, credential issue, and revocation. The opaque device
 credential is marked `writeOnly` only in the credential-issue response.
+Challenge responses also carry a closed QR payload bound to the outer
+challenge and expiry. It requires protocol version `1`, an opaque PC
+installation identity, a lowercase SHA-256 TLS fingerprint, and an
+explicit-port HTTPS sync endpoint restricted to private or local network
+addresses. Credentials, queries, fragments, public addresses, and insecure
+schemes are rejected. Endpoint values remain confined to pairing responses and
+are not retained in health, logs, or release evidence.
 
 Sync requests use UUID-shaped opaque identifiers, integer UTC milliseconds,
 server revisions, stable entity/operation/result/conflict vocabularies,
 bounded batches of `100`, opaque cursors, explicit tombstones, and a common
-`cursor_expired` error. Payloads are JSON objects capped at `64` direct
-properties, `32,768` serialized characters, and depth `8`; prototype
-pollution keys, cycles, duplicate operation IDs, and payload-bearing deletes
-are rejected.
+`cursor_expired` error. Each operation includes protocol version `1`, a
+positive schema version, and a positive safe-integer per-device sequence.
+Every pushed operation must match its enclosing device, operation IDs must be
+unique, and device sequences must be strictly increasing in request order.
+Accepted and duplicate results require only an authoritative revision;
+conflicts require a revision and conflict ID; rejected results require only a
+stable error code. Pull pages reject duplicate change IDs while leaving cursor
+ordering opaque to clients.
+
+Payloads are JSON objects capped at `64` direct properties, exactly `32,768`
+serialized UTF-16 code units as measured by `JSON.stringify`, and depth `8`.
+Prototype-pollution keys, cycles, accessors, non-JSON values, oversized exact
+serialization, and payload-bearing deletes are rejected safely.
 
 The Task 5 contract exposed an unreleased Task 4 mismatch: the database
 reminder CHECK omitted `due` and `failed`. A cross-contract RED failed when it
@@ -306,9 +322,9 @@ and fails contract tests on byte drift. The public contract fingerprints use
 sorted schema filenames plus exact bytes for the bundle:
 
 - Schema bundle SHA-256:
-  `761177f5bc8491b59a031b445250bfb885aa1adde40407bfd97132fe47cc92cc`
+  `9c5292808862a88cb1035f6431456e5776442de0086e321769e1b892a815d145`
 - OpenAPI SHA-256:
-  `e8f8dd9dcc064ab8d8861aa5b5aa4a584b099f53963cc36347b8ae7c19df5e1b`
+  `c58423ce97f8f2960ccc11e7d2fd828b3360a114ca01861a4c7fce17fbceb450`
 
 No listener, file write, HTTP implementation, authentication implementation,
 client change, legacy data access, or raw database hash is part of the
@@ -317,7 +333,7 @@ verified Task 2 audit counts remain unchanged.
 
 The final pinned-runtime root verification passed with workspace `41/41`,
 containment `21/21`, hygiene `63/63`, backend `278/278`, safe legacy runner
-`57/57`, requirements `18/18`, and contracts `19/19`. Every suite reported
+`57/57`, requirements `18/18`, and contracts `22/22`. Every suite reported
 zero failures and zero skips. Secretlint, the direct hygiene checker, all
 workspace lint, repository format checking, extension validation, and the
 build syntax checks also passed.

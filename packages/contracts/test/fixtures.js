@@ -2,6 +2,7 @@ export const ids = Object.freeze({
   profile: '5e83908d-e121-4c56-b7dc-6ee3d745cc30',
   reminder: '11ec785a-6677-4c35-8aef-2a01cb393533',
   challenge: 'challenge_FYB3D6mR6Yhs4jK9sGvQ2fE1',
+  installation: 'installation_FYB3D6mR6Yhs4jK9',
   device: '6ba7b810-9dad-4d1f-80b4-00c04fd430c8',
   operation: '6ba7b811-9dad-4d1f-80b4-00c04fd430c8',
   operation2: '6ba7b812-9dad-4d1f-80b4-00c04fd430c8',
@@ -72,6 +73,14 @@ export const validFixtures = Object.freeze({
     expiresAt: 1_800_000_000_000,
     status: 'pending_confirmation',
     oneUse: true,
+    qrPayload: {
+      protocolVersion: '1',
+      syncEndpoint: 'https://192.168.1.20:9443/v1/sync',
+      tlsFingerprint: `sha256:${'ab'.repeat(32)}`,
+      installationId: ids.installation,
+      challengeId: ids.challenge,
+      expiresAt: 1_800_000_000_000,
+    },
   },
   pairingConfirmationRequest: {
     challengeId: ids.challenge,
@@ -111,11 +120,30 @@ export const validFixtures = Object.freeze({
     entityId: ids.entity,
     kind: 'upsert',
     baseRevision: 0,
+    deviceSequence: 1,
+    schemaVersion: 3,
+    protocolVersion: '1',
     payload: { title: 'Review saved note', nested: { enabled: true } },
     occurredAt: 1_700_000_000_000,
   },
   syncPushResponse: {
     results: [{ operationId: ids.operation, status: 'accepted', revision: 1 }],
+    serverTime: 1_700_000_000_000,
+  },
+  syncPullResponse: {
+    changes: [
+      {
+        changeId: ids.operation2,
+        entityType: 'reminder',
+        entityId: ids.entity,
+        kind: 'delete',
+        revision: 3,
+        payload: {},
+        changedAt: 1_700_000_000_000,
+      },
+    ],
+    nextCursor: null,
+    hasMore: false,
     serverTime: 1_700_000_000_000,
   },
 });

@@ -54,10 +54,39 @@
         }
       }
     },
+    "PairingQrPayload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["protocolVersion", "syncEndpoint", "tlsFingerprint", "installationId", "challengeId", "expiresAt"],
+      "properties": {
+        "protocolVersion": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/ProtocolVersion"
+        },
+        "syncEndpoint": {
+          "type": "string",
+          "minLength": 20,
+          "maxLength": 512,
+          "pattern": "^https://"
+        },
+        "tlsFingerprint": {
+          "type": "string",
+          "pattern": "^sha256:[a-f0-9]{64}$"
+        },
+        "installationId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/OpaqueId"
+        },
+        "challengeId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/OpaqueId"
+        },
+        "expiresAt": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        }
+      }
+    },
     "PairingChallengeResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["challengeId", "expiresAt", "status", "oneUse"],
+      "required": ["challengeId", "expiresAt", "status", "oneUse", "qrPayload"],
       "properties": {
         "challengeId": {
           "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/OpaqueId"
@@ -70,6 +99,9 @@
         },
         "oneUse": {
           "const": true
+        },
+        "qrPayload": {
+          "$ref": "#/$defs/PairingQrPayload"
         }
       }
     },
