@@ -316,6 +316,63 @@ test('probe denies direct CommonJS and ESM ChildProcess launches without exposin
   }
 });
 
+test('probe removes imported process listeners before restoring write guards', () => {
+  const secretExitValue = 'sensitive-exit-listener-value';
+  const secretBeforeExitValue = 'sensitive-before-exit-listener-value';
+  const root = createFixture({
+    'external/before-exit-sentinel.txt': 'original',
+    'external/exit-sentinel.txt': 'original',
+    'source/placeholder.txt': '',
+  });
+  const sourceRoot = join(root, 'source');
+  const exitTarget = join(root, 'external', 'exit-sentinel.txt');
+  const beforeExitTarget = join(root, 'external', 'before-exit-sentinel.txt');
+  writeFileSync(
+    join(sourceRoot, 'process-listeners.js'),
+    `
+      const fs = require('node:fs');
+      process.prependListener('exit', () => {
+        fs.writeFileSync(${JSON.stringify(exitTarget)}, ${JSON.stringify(secretExitValue)});
+      });
+      process.once('beforeExit', () => {
+        fs.writeFileSync(${JSON.stringify(beforeExitTarget)}, ${JSON.stringify(secretBeforeExitValue)});
+      });
+      process.on('easy-rewind-import-probe-baseline', () => {});
+    `
+  );
+
+  try {
+    const result = runImportProbe({
+      modules: [join(sourceRoot, 'process-listeners.js')],
+      sourceRoot,
+    });
+
+    assert.deepEqual(
+      {
+        status: result.status,
+        operations: result.report.violations.map(({ operation }) => operation),
+        baselineProcessListenersPreserved: result.report.baselineProcessListenersPreserved,
+        exitSentinel: readFileSync(exitTarget, 'utf8'),
+        beforeExitSentinel: readFileSync(beforeExitTarget, 'utf8'),
+      },
+      {
+        status: 1,
+        operations: ['process.listener', 'process.listener', 'process.listener'],
+        baselineProcessListenersPreserved: true,
+        exitSentinel: 'original',
+        beforeExitSentinel: 'original',
+      }
+    );
+    const serializedReport = JSON.stringify(result.report);
+    assert.equal(serializedReport.includes(exitTarget), false);
+    assert.equal(serializedReport.includes(beforeExitTarget), false);
+    assert.equal(serializedReport.includes(secretExitValue), false);
+    assert.equal(serializedReport.includes(secretBeforeExitValue), false);
+  } finally {
+    removeFixture(root);
+  }
+});
+
 test('probe denies global, node:timers, and node:timers/promises scheduling entry points', () => {
   const root = createFixture({
     'timers.js': `

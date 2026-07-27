@@ -596,6 +596,13 @@ net.Server.prototype.listen = function () {
 };
 syncBuiltinESMExports();
 
+const processEventNames = process.eventNames.bind(process);
+const processRawListeners = process.rawListeners.bind(process);
+function probeBaselineProcessListener() {}
+process.on('easy-rewind-import-probe-baseline', probeBaselineProcessListener);
+const processListenerBaseline = new Map(
+  processEventNames().map(eventName => [eventName, processRawListeners(eventName)])
+);
 const stdioHandles = [process.stdin, process.stdout, process.stderr];
 const activeHandlesBefore = process._getActiveHandles();
 const activeHandleBaseline = new Set(activeHandlesBefore);
@@ -661,6 +668,65 @@ function handleType(handle) {
   return safeName(handle?.constructor?.name, 'UnknownHandle');
 }
 
+function retainBaselineProcessListeners(eventName, currentListeners) {
+  const remaining = new Map();
+  for (const listener of processListenerBaseline.get(eventName) || []) {
+    remaining.set(listener, (remaining.get(listener) || 0) + 1);
+  }
+
+  const retained = [];
+  for (const listener of currentListeners) {
+    const count = remaining.get(listener) || 0;
+    if (count === 0) continue;
+    retained.push(listener);
+    remaining.set(listener, count - 1);
+  }
+  return retained;
+}
+
+function replaceRawProcessListeners(eventName, listeners) {
+  const events = process._events;
+  if (!events || typeof events !== 'object') throw new Error('Process listener table unavailable');
+  if (listeners.length === 0) {
+    Reflect.deleteProperty(events, eventName);
+  } else {
+    Reflect.set(events, eventName, listeners.length === 1 ? listeners[0] : listeners);
+  }
+}
+
+function removeImportedProcessListeners() {
+  let removed = 0;
+  for (const eventName of processEventNames()) {
+    const currentListeners = processRawListeners(eventName);
+    const retainedListeners = retainBaselineProcessListeners(eventName, currentListeners);
+    if (retainedListeners.length === currentListeners.length) continue;
+    removed += currentListeners.length - retainedListeners.length;
+    replaceRawProcessListeners(eventName, retainedListeners);
+  }
+
+  if (process._events && typeof process._events === 'object') {
+    process._eventsCount = Reflect.ownKeys(process._events).length;
+  }
+  for (let index = 0; index < removed; index += 1) {
+    recordRuntimeViolation('process.listener', 'process');
+  }
+}
+
+function baselineProcessListenersRemain() {
+  for (const [eventName, baselineListeners] of processListenerBaseline) {
+    const remaining = new Map();
+    for (const listener of processRawListeners(eventName)) {
+      remaining.set(listener, (remaining.get(listener) || 0) + 1);
+    }
+    for (const listener of baselineListeners) {
+      const count = remaining.get(listener) || 0;
+      if (count === 0) return false;
+      remaining.set(listener, count - 1);
+    }
+  }
+  return true;
+}
+
 async function settleEventLoop() {
   for (let turn = 0; turn < 4; turn += 1) {
     await new Promise(resolve => original.setImmediate(resolve));
@@ -668,23 +734,41 @@ async function settleEventLoop() {
 }
 
 function cleanupProbe(activeHandles = []) {
-  restoreEnvironment();
-  restoreFilesystem();
-  for (const handle of activeHandles) {
-    if (activeHandleBaseline.has(handle)) continue;
-    try {
-      handle.close?.();
-      handle.destroy?.();
-      handle.terminate?.();
-    } catch {
-      // The isolated child is terminated after reporting.
+  let importedListenersRemoved = false;
+  try {
+    removeImportedProcessListeners();
+    for (const handle of activeHandles) {
+      if (activeHandleBaseline.has(handle)) continue;
+      try {
+        handle.close?.();
+        handle.destroy?.();
+        handle.terminate?.();
+      } catch {
+        // The isolated child is terminated after reporting.
+      }
+    }
+    removeImportedProcessListeners();
+    importedListenersRemoved = true;
+  } finally {
+    if (importedListenersRemoved) {
+      try {
+        restoreEnvironment();
+      } finally {
+        try {
+          restoreFilesystem();
+        } finally {
+          original.fs.get('rmSync').call(fs, runtimeRoot, { recursive: true, force: true });
+        }
+      }
+    } else {
+      original.fs.get('rmSync').call(fs, runtimeRoot, { recursive: true, force: true });
     }
   }
-  fs.rmSync(runtimeRoot, { recursive: true, force: true });
 }
 
 async function main() {
   let activeHandlesAfter = [];
+  let baselineProcessListenersPreserved = true;
   let report;
   let status;
   try {
@@ -701,6 +785,11 @@ async function main() {
       }
     }
 
+    removeImportedProcessListeners();
+    baselineProcessListenersPreserved = baselineProcessListenersRemain();
+    if (!baselineProcessListenersPreserved) {
+      recordRuntimeViolation('process.listenerBaseline', 'process');
+    }
     activeHandlesAfter = process._getActiveHandles();
     const newBackendHandles = activeHandlesAfter
       .filter(handle => activeHandleBaseline.has(handle) === false)
@@ -719,6 +808,7 @@ async function main() {
       newBackendHandles,
       newBackendResources,
       pathsChanged,
+      baselineProcessListenersPreserved,
     };
     status =
       importError ||
@@ -749,6 +839,7 @@ main().catch(error => {
     newBackendHandles: [],
     newBackendResources: [],
     pathsChanged: true,
+    baselineProcessListenersPreserved: baselineProcessListenersRemain(),
   };
   process.stdout.write(`\nIMPORT_SAFETY_REPORT:${JSON.stringify(report)}\n`, () => process.exit(1));
 });

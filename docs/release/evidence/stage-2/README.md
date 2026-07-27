@@ -54,8 +54,8 @@ On 2026-07-25, the backend test runner was migrated from Jest to the built-in
 Node.js test runner. The `57` inherited behavior tests (`56` API tests and one
 Nodemailer compatibility test) pass with a unique repository-external
 database and settings path for every API test. On 2026-07-27, the import probe
-was strengthened with twelve regression fixtures. The complete backend
-command passes `84/84`, including import-safety, database-path,
+was strengthened with thirteen regression fixtures. The complete backend
+command passes `85/85`, including import-safety, database-path,
 temporary-environment, and loopback ephemeral-server coverage.
 
 Importing `server.js` and all eight production route modules now creates no
@@ -70,6 +70,9 @@ promise timers, and promise scheduler methods are denied before import; the
 subprocess coverage includes exported helpers, `_forkChild`, and direct
 CommonJS/ESM `ChildProcess.prototype.spawn` calls. Subprocess commands,
 arguments, options, paths, and environments are never reported.
+Process-event listener identities are also snapshotted before import; imported
+listeners are reported with a fixed label and removed directly without
+invocation while filesystem, subprocess, and timer guards remain active.
 Server startup, schedulers, settings loading, and database opening remain
 explicit actions. The previous Jest `TCPSERVERWRAP` and `Timeout` diagnostic
 is therefore resolved for this test scope; this does not claim that the
@@ -97,8 +100,10 @@ after failed listen/close operations. Additional RED checks showed that direct
 CommonJS/ESM `ChildProcess` construction returned a clean probe result while
 fixture-owned external sentinels changed, and that second rate-limit and
 scheduler allocation failures each left one created timer uncleared. No raw
+An additional RED fixture returned a clean report before an imported exit
+listener wrote an external sentinel during process termination. No raw
 environment values, subprocess commands, arguments, options, personal paths,
-contents, or hashes are retained.
+listener event names, contents, or hashes are retained.
 
 A pinned Node `24.18.0` lockfile-clean install added `525` packages and audited
 `528`. The installed dependency tree is empty for Jest, its package directory
