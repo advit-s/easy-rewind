@@ -1,0 +1,1627 @@
+{
+  "components": {
+    "schemas": {
+      "ComponentReadiness": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "enum": [
+              "ready",
+              "degraded",
+              "unavailable",
+              "disabled"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/health.json#/$defs/ComponentReadiness"
+      },
+      "Cursor": {
+        "maxLength": 256,
+        "minLength": 24,
+        "pattern": "^[A-Za-z][A-Za-z0-9_-]+$",
+        "type": "string",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Cursor"
+      },
+      "DeviceIdentity": {
+        "additionalProperties": false,
+        "properties": {
+          "createdAt": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          },
+          "deviceId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "lastSeenAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UtcMilliseconds"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "platform": {
+            "enum": [
+              "android"
+            ],
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "active",
+              "revoked"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "deviceId",
+          "name",
+          "platform",
+          "status",
+          "createdAt",
+          "lastSeenAt"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pairing.json#/$defs/DeviceIdentity"
+      },
+      "ErrorBody": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "enum": [
+              "auth_required",
+              "auth_invalid",
+              "forbidden",
+              "not_found",
+              "validation_failed",
+              "conflict",
+              "rate_limited",
+              "internal_error",
+              "api_version_unsupported",
+              "cursor_expired",
+              "device_revoked",
+              "not_implemented"
+            ],
+            "type": "string"
+          },
+          "details": {
+            "$ref": "#/components/schemas/ErrorDetails"
+          },
+          "message": {
+            "maxLength": 160,
+            "minLength": 1,
+            "pattern": "^[^\\r\\n\\\\/]*$",
+            "type": "string"
+          },
+          "requestId": {
+            "$ref": "#/components/schemas/OpaqueId"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "requestId",
+          "details"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/errors.json#/$defs/ErrorBody"
+      },
+      "ErrorDetails": {
+        "additionalProperties": false,
+        "properties": {},
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/errors.json#/$defs/ErrorDetails"
+      },
+      "ErrorResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorBody"
+          }
+        },
+        "required": [
+          "error"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/errors.json#/$defs/ErrorResponse"
+      },
+      "HealthComponents": {
+        "additionalProperties": false,
+        "properties": {
+          "applicationApi": {
+            "$ref": "#/components/schemas/ComponentReadiness"
+          },
+          "database": {
+            "$ref": "#/components/schemas/ComponentReadiness"
+          },
+          "lanSync": {
+            "$ref": "#/components/schemas/ComponentReadiness"
+          },
+          "scheduler": {
+            "$ref": "#/components/schemas/ComponentReadiness"
+          }
+        },
+        "required": [
+          "database",
+          "applicationApi",
+          "scheduler",
+          "lanSync"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/health.json#/$defs/HealthComponents"
+      },
+      "HealthResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "apiVersion": {
+            "maxLength": 8,
+            "pattern": "^[1-9][0-9]*$",
+            "type": "string"
+          },
+          "components": {
+            "$ref": "#/components/schemas/HealthComponents"
+          },
+          "legacyMigrationAvailable": {
+            "type": "boolean"
+          },
+          "mode": {
+            "enum": [
+              "production",
+              "standalone",
+              "test"
+            ],
+            "type": "string"
+          },
+          "schemaVersion": {
+            "maximum": 2147483647,
+            "minimum": 0,
+            "type": "integer"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "degraded",
+              "unavailable"
+            ],
+            "type": "string"
+          },
+          "version": {
+            "maxLength": 64,
+            "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "version",
+          "schemaVersion",
+          "apiVersion",
+          "mode",
+          "components"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/health.json#/$defs/HealthResponse"
+      },
+      "JsonArray": {
+        "items": {
+          "$ref": "#/components/schemas/JsonValue"
+        },
+        "maxItems": 256,
+        "type": "array",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/JsonArray"
+      },
+      "JsonObject": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/JsonValue"
+        },
+        "maxProperties": 64,
+        "propertyNames": {
+          "maxLength": 128,
+          "not": {
+            "enum": [
+              "__proto__",
+              "constructor",
+              "prototype"
+            ]
+          }
+        },
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/JsonObject"
+      },
+      "JsonPrimitive": {
+        "anyOf": [
+          {
+            "type": "string"
+          },
+          {
+            "type": "number"
+          },
+          {
+            "type": "boolean"
+          },
+          {
+            "type": "null"
+          }
+        ],
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/JsonPrimitive"
+      },
+      "JsonValue": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/JsonPrimitive"
+          },
+          {
+            "$ref": "#/components/schemas/JsonArray"
+          },
+          {
+            "$ref": "#/components/schemas/JsonObject"
+          }
+        ],
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/JsonValue"
+      },
+      "OpaqueId": {
+        "maxLength": 256,
+        "minLength": 16,
+        "pattern": "^[A-Za-z][A-Za-z0-9_-]+$",
+        "type": "string",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/OpaqueId"
+      },
+      "PaginationItem": {
+        "additionalProperties": {
+          "$ref": "#/components/schemas/JsonValue"
+        },
+        "propertyNames": {
+          "not": {
+            "enum": [
+              "__proto__",
+              "constructor",
+              "prototype"
+            ]
+          }
+        },
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pagination.json#/$defs/PaginationItem"
+      },
+      "PaginationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "$ref": "#/components/schemas/Cursor"
+          },
+          "limit": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pagination.json#/$defs/PaginationRequest"
+      },
+      "PaginationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "hasMore": {
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/PaginationItem"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Cursor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "items",
+          "nextCursor",
+          "hasMore"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pagination.json#/$defs/PaginationResponse"
+      },
+      "PairingChallengeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "deviceName": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "platform": {
+            "enum": [
+              "android"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "deviceName",
+          "platform"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pairing.json#/$defs/PairingChallengeRequest"
+      },
+      "PairingChallengeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "challengeId": {
+            "$ref": "#/components/schemas/OpaqueId"
+          },
+          "expiresAt": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          },
+          "oneUse": {
+            "const": true
+          },
+          "status": {
+            "const": "pending_confirmation"
+          }
+        },
+        "required": [
+          "challengeId",
+          "expiresAt",
+          "status",
+          "oneUse"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pairing.json#/$defs/PairingChallengeResponse"
+      },
+      "PairingConfirmationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "challengeId": {
+            "$ref": "#/components/schemas/OpaqueId"
+          },
+          "confirmed": {
+            "const": true
+          }
+        },
+        "required": [
+          "challengeId",
+          "confirmed"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pairing.json#/$defs/PairingConfirmationRequest"
+      },
+      "PairingCredential": {
+        "additionalProperties": false,
+        "properties": {
+          "issuedAt": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          },
+          "token": {
+            "maxLength": 512,
+            "minLength": 32,
+            "pattern": "^[A-Za-z][A-Za-z0-9_-]+$",
+            "type": "string",
+            "writeOnly": true
+          },
+          "tokenType": {
+            "const": "Bearer"
+          }
+        },
+        "required": [
+          "token",
+          "tokenType",
+          "issuedAt"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pairing.json#/$defs/PairingCredential"
+      },
+      "PairingCredentialIssueRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "challengeId": {
+            "$ref": "#/components/schemas/OpaqueId"
+          }
+        },
+        "required": [
+          "challengeId"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pairing.json#/$defs/PairingCredentialIssueRequest"
+      },
+      "PairingCredentialResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "credential": {
+            "$ref": "#/components/schemas/PairingCredential"
+          },
+          "device": {
+            "$ref": "#/components/schemas/DeviceIdentity"
+          }
+        },
+        "required": [
+          "device",
+          "credential"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pairing.json#/$defs/PairingCredentialResponse"
+      },
+      "PairingRevokeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "deviceId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "reason": {
+            "enum": [
+              "user_requested",
+              "credential_compromised",
+              "device_lost"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "deviceId",
+          "reason"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pairing.json#/$defs/PairingRevokeRequest"
+      },
+      "PairingRevokeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "deviceId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "revokedAt": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          },
+          "status": {
+            "const": "revoked"
+          }
+        },
+        "required": [
+          "deviceId",
+          "status",
+          "revokedAt"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/pairing.json#/$defs/PairingRevokeResponse"
+      },
+      "Reminder": {
+        "additionalProperties": false,
+        "properties": {
+          "createdAt": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          },
+          "note": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "profileId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "reminderId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "scheduledFor": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          },
+          "state": {
+            "$ref": "#/components/schemas/ReminderState"
+          },
+          "timezone": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "updatedAt": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          }
+        },
+        "required": [
+          "reminderId",
+          "profileId",
+          "title",
+          "scheduledFor",
+          "timezone",
+          "state",
+          "revision",
+          "createdAt",
+          "updatedAt"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/reminders.json#/$defs/Reminder"
+      },
+      "ReminderCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "maxLength": 2000,
+            "type": "string"
+          },
+          "profileId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "scheduledFor": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          },
+          "timezone": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_]+(?:/[A-Za-z0-9_+-]+)+$",
+            "type": "string"
+          },
+          "title": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "profileId",
+          "title",
+          "scheduledFor",
+          "timezone"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/reminders.json#/$defs/ReminderCreateRequest"
+      },
+      "ReminderResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "reminder": {
+            "$ref": "#/components/schemas/Reminder"
+          }
+        },
+        "required": [
+          "reminder"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/reminders.json#/$defs/ReminderResponse"
+      },
+      "ReminderState": {
+        "enum": [
+          "scheduled",
+          "snoozed",
+          "due",
+          "completed",
+          "cancelled",
+          "failed"
+        ],
+        "type": "string",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/reminders.json#/$defs/ReminderState"
+      },
+      "ReminderUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "expectedRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "scheduledFor": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          },
+          "transitionTo": {
+            "$ref": "#/components/schemas/ReminderState"
+          }
+        },
+        "required": [
+          "expectedRevision",
+          "transitionTo"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/reminders.json#/$defs/ReminderUpdateRequest"
+      },
+      "Revision": {
+        "maximum": 2147483647,
+        "minimum": 0,
+        "type": "integer",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Revision"
+      },
+      "SyncChange": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "delete"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "payload": {
+                  "additionalProperties": false,
+                  "maxProperties": 0,
+                  "type": "object"
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "changeId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "changedAt": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          },
+          "entityId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "entityType": {
+            "$ref": "#/components/schemas/SyncEntityType"
+          },
+          "kind": {
+            "enum": [
+              "upsert",
+              "delete"
+            ],
+            "type": "string"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/SyncPayload"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "required": [
+          "changeId",
+          "entityType",
+          "entityId",
+          "kind",
+          "revision",
+          "payload",
+          "changedAt"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/sync.json#/$defs/SyncChange"
+      },
+      "SyncConflict": {
+        "additionalProperties": false,
+        "properties": {
+          "conflictId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "detectedAt": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          },
+          "entityId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "entityType": {
+            "$ref": "#/components/schemas/SyncEntityType"
+          },
+          "localRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "remoteRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "resolvedAt": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/UtcMilliseconds"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "enum": [
+              "unresolved",
+              "client_wins",
+              "server_wins",
+              "merged"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "conflictId",
+          "entityType",
+          "entityId",
+          "localRevision",
+          "remoteRevision",
+          "status",
+          "detectedAt",
+          "resolvedAt"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/sync.json#/$defs/SyncConflict"
+      },
+      "SyncEntityType": {
+        "enum": [
+          "item",
+          "bookmark",
+          "note",
+          "highlight",
+          "tag",
+          "reminder",
+          "flashcard",
+          "quiz_result",
+          "research_job",
+          "digest",
+          "setting"
+        ],
+        "type": "string",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/sync.json#/$defs/SyncEntityType"
+      },
+      "SyncOperation": {
+        "additionalProperties": false,
+        "allOf": [
+          {
+            "if": {
+              "properties": {
+                "kind": {
+                  "const": "delete"
+                }
+              },
+              "required": [
+                "kind"
+              ]
+            },
+            "then": {
+              "properties": {
+                "payload": {
+                  "additionalProperties": false,
+                  "maxProperties": 0,
+                  "type": "object"
+                }
+              }
+            }
+          }
+        ],
+        "properties": {
+          "baseRevision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "deviceId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "entityId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "entityType": {
+            "$ref": "#/components/schemas/SyncEntityType"
+          },
+          "kind": {
+            "enum": [
+              "upsert",
+              "delete"
+            ],
+            "type": "string"
+          },
+          "occurredAt": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          },
+          "operationId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "payload": {
+            "$ref": "#/components/schemas/SyncPayload"
+          }
+        },
+        "required": [
+          "operationId",
+          "deviceId",
+          "entityType",
+          "entityId",
+          "kind",
+          "baseRevision",
+          "payload",
+          "occurredAt"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/sync.json#/$defs/SyncOperation"
+      },
+      "SyncPayload": {
+        "$ref": "#/components/schemas/JsonObject",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/sync.json#/$defs/SyncPayload"
+      },
+      "SyncPullRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "cursor": {
+            "$ref": "#/components/schemas/Cursor"
+          },
+          "deviceId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "limit": {
+            "maximum": 100,
+            "minimum": 1,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deviceId"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/sync.json#/$defs/SyncPullRequest"
+      },
+      "SyncPullResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "changes": {
+            "items": {
+              "$ref": "#/components/schemas/SyncChange"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "hasMore": {
+            "type": "boolean"
+          },
+          "nextCursor": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Cursor"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "serverTime": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          }
+        },
+        "required": [
+          "changes",
+          "nextCursor",
+          "hasMore",
+          "serverTime"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/sync.json#/$defs/SyncPullResponse"
+      },
+      "SyncPushRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "deviceId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/SyncOperation"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "deviceId",
+          "operations"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/sync.json#/$defs/SyncPushRequest"
+      },
+      "SyncPushResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SyncPushResult"
+            },
+            "maxItems": 100,
+            "type": "array"
+          },
+          "serverTime": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          }
+        },
+        "required": [
+          "results",
+          "serverTime"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/sync.json#/$defs/SyncPushResponse"
+      },
+      "SyncPushResult": {
+        "additionalProperties": false,
+        "properties": {
+          "conflictId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "errorCode": {
+            "enum": [
+              "validation_failed",
+              "conflict",
+              "device_revoked"
+            ],
+            "type": "string"
+          },
+          "operationId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "duplicate",
+              "conflict",
+              "rejected"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "operationId",
+          "status"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/sync.json#/$defs/SyncPushResult"
+      },
+      "SyncTombstone": {
+        "additionalProperties": false,
+        "properties": {
+          "deletedAt": {
+            "$ref": "#/components/schemas/UtcMilliseconds"
+          },
+          "entityId": {
+            "$ref": "#/components/schemas/Uuid"
+          },
+          "entityType": {
+            "$ref": "#/components/schemas/SyncEntityType"
+          },
+          "revision": {
+            "$ref": "#/components/schemas/Revision"
+          }
+        },
+        "required": [
+          "entityType",
+          "entityId",
+          "revision",
+          "deletedAt"
+        ],
+        "type": "object",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/sync.json#/$defs/SyncTombstone"
+      },
+      "UtcMilliseconds": {
+        "maximum": 8640000000000000,
+        "minimum": 0,
+        "type": "integer",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+      },
+      "Uuid": {
+        "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
+        "type": "string",
+        "x-canonical-schema-id": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+      }
+    }
+  },
+  "info": {
+    "description": "Frozen local API and device synchronization contract.",
+    "title": "Easy Rewind Local API",
+    "version": "1.0.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/health": {
+      "get": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            },
+            "description": "Successful response."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          }
+        },
+        "summary": "Read sanitized service readiness."
+      }
+    },
+    "/v1/pairing/challenges": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairingChallengeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingChallengeResponse"
+                }
+              }
+            },
+            "description": "Successful response."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          }
+        },
+        "summary": "Create a short-lived one-use pairing challenge."
+      }
+    },
+    "/v1/pairing/confirmations": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairingConfirmationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful response with no body."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          }
+        },
+        "summary": "Explicitly confirm a pairing challenge on the PC."
+      }
+    },
+    "/v1/pairing/credentials": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairingCredentialIssueRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingCredentialResponse"
+                }
+              }
+            },
+            "description": "Successful response."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          }
+        },
+        "summary": "Issue a credential for a confirmed one-use challenge."
+      }
+    },
+    "/v1/pairing/revocations": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PairingRevokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PairingRevokeResponse"
+                }
+              }
+            },
+            "description": "Successful response."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          }
+        },
+        "summary": "Revoke a paired device."
+      }
+    },
+    "/v1/session": {
+      "post": {
+        "responses": {
+          "204": {
+            "description": "Successful response with no body."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          }
+        },
+        "summary": "Exchange an authenticated local request for a browser session."
+      }
+    },
+    "/v1/sync/pull": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncPullRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncPullResponse"
+                }
+              }
+            },
+            "description": "Successful response."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          }
+        },
+        "summary": "Pull a bounded page of changes from an opaque cursor."
+      }
+    },
+    "/v1/sync/push": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SyncPushRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SyncPushResponse"
+                }
+              }
+            },
+            "description": "Successful response."
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Safe error response."
+          }
+        },
+        "summary": "Push a bounded idempotent operation batch."
+      }
+    }
+  }
+}

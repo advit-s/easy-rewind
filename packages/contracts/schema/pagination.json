@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.easy-rewind.invalid/schema/pagination.json",
+  "$defs": {
+    "PaginationItem": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "enum": ["__proto__", "constructor", "prototype"]
+        }
+      },
+      "additionalProperties": {
+        "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/JsonValue"
+      }
+    },
+    "PaginationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "cursor": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "PaginationResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["items", "nextCursor", "hasMore"],
+      "properties": {
+        "items": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/PaginationItem"
+          }
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hasMore": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

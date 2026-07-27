@@ -14,3 +14,4 @@ quarantine
 migration-work
 backend/data
 package-lock.json
+/docs/api/openapi.json

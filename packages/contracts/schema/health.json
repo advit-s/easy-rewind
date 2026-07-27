@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.easy-rewind.invalid/schema/health.json",
+  "$defs": {
+    "ComponentReadiness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["ready", "degraded", "unavailable", "disabled"]
+        }
+      }
+    },
+    "HealthComponents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["database", "applicationApi", "scheduler", "lanSync"],
+      "properties": {
+        "database": {
+          "$ref": "#/$defs/ComponentReadiness"
+        },
+        "applicationApi": {
+          "$ref": "#/$defs/ComponentReadiness"
+        },
+        "scheduler": {
+          "$ref": "#/$defs/ComponentReadiness"
+        },
+        "lanSync": {
+          "$ref": "#/$defs/ComponentReadiness"
+        }
+      }
+    },
+    "HealthResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "version", "schemaVersion", "apiVersion", "mode", "components"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["ok", "degraded", "unavailable"]
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$",
+          "maxLength": 64
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "apiVersion": {
+          "type": "string",
+          "pattern": "^[1-9][0-9]*$",
+          "maxLength": 8
+        },
+        "mode": {
+          "type": "string",
+          "enum": ["production", "standalone", "test"]
+        },
+        "components": {
+          "$ref": "#/$defs/HealthComponents"
+        },
+        "legacyMigrationAvailable": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

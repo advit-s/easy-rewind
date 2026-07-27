@@ -396,7 +396,7 @@ test('every Stage 2 requirement points to a safe repository evidence file that e
   assert.equal(validated.rows.length, rows.length);
 });
 
-test('root verification adds the Stage 2 requirements gate without changing the Stage 1 gate', () => {
+test('root verification adds requirements and contracts after the unchanged Stage 1 gate', () => {
   const repository = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 
   assert.equal(repository.scripts['test:requirements'], 'node --test scripts/validation/stage2-requirements.test.mjs');
@@ -404,5 +404,8 @@ test('root verification adds the Stage 2 requirements gate without changing the 
     repository.scripts['verify:stage1'],
     'npm run scan:secrets && npm run check:hygiene && npm run lint && npm run format:check && npm test && npm run build'
   );
-  assert.equal(repository.scripts.verify, 'npm run verify:stage1 && npm run test:requirements');
+  assert.equal(
+    repository.scripts.verify,
+    'npm run verify:stage1 && npm run test:requirements && npm run test:contracts'
+  );
 });

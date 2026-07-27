@@ -108,7 +108,7 @@ CREATE TABLE reminders (
   id TEXT PRIMARY KEY CHECK (id <> ''),
   profile_id TEXT NOT NULL REFERENCES profiles(id) ON DELETE CASCADE,
   item_id TEXT,
-  state TEXT NOT NULL CHECK (state IN ('scheduled', 'snoozed', 'completed', 'cancelled')),
+  state TEXT NOT NULL CHECK (state IN ('scheduled', 'snoozed', 'due', 'completed', 'cancelled', 'failed')),
   due_at INTEGER NOT NULL CHECK (due_at >= 0),
   completed_at INTEGER CHECK (completed_at IS NULL OR completed_at >= 0),
   created_at INTEGER NOT NULL CHECK (created_at >= 0),

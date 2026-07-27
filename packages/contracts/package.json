@@ -1,0 +1,29 @@
+{
+  "name": "@easy-rewind/contracts",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.18.0 <25",
+    "npm": ">=11.6.2 <12"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js",
+    "lint": "node --check src/index.js && node --check src/errors.js && node --check src/health.js && node --check src/pagination.js && node --check src/pairing.js && node --check src/reminders.js && node --check src/sync.js && node --check src/validation.js && node --check scripts/generate-openapi.mjs && node --check scripts/validate-independence.mjs && node --check test/contracts.test.js && node --check test/fixtures.js && node --check test/independence.test.js",
+    "format": "prettier --write \"**/*.{js,json,mjs}\"",
+    "format:check": "prettier --check \"**/*.{js,json,mjs}\""
+  },
+  "dependencies": {
+    "ajv": "8.20.0"
+  },
+  "exports": {
+    ".": "./src/index.js",
+    "./errors": "./src/errors.js",
+    "./health": "./src/health.js",
+    "./pagination": "./src/pagination.js",
+    "./pairing": "./src/pairing.js",
+    "./reminders": "./src/reminders.js",
+    "./sync": "./src/sync.js",
+    "./schemas/*": "./schema/*.json"
+  }
+}

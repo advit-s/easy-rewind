@@ -1,0 +1,311 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.easy-rewind.invalid/schema/sync.json",
+  "$defs": {
+    "SyncEntityType": {
+      "type": "string",
+      "enum": [
+        "item",
+        "bookmark",
+        "note",
+        "highlight",
+        "tag",
+        "reminder",
+        "flashcard",
+        "quiz_result",
+        "research_job",
+        "digest",
+        "setting"
+      ]
+    },
+    "SyncPayload": {
+      "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/JsonObject"
+    },
+    "SyncOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "operationId",
+        "deviceId",
+        "entityType",
+        "entityId",
+        "kind",
+        "baseRevision",
+        "payload",
+        "occurredAt"
+      ],
+      "properties": {
+        "operationId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "deviceId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "entityType": {
+          "$ref": "#/$defs/SyncEntityType"
+        },
+        "entityId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["upsert", "delete"]
+        },
+        "baseRevision": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Revision"
+        },
+        "payload": {
+          "$ref": "#/$defs/SyncPayload"
+        },
+        "occurredAt": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "delete"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "additionalProperties": false,
+                "maxProperties": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "SyncPushRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deviceId", "operations"],
+      "properties": {
+        "deviceId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "operations": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/SyncOperation"
+          }
+        }
+      }
+    },
+    "SyncPushResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operationId", "status"],
+      "properties": {
+        "operationId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["accepted", "duplicate", "conflict", "rejected"]
+        },
+        "revision": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Revision"
+        },
+        "conflictId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "errorCode": {
+          "type": "string",
+          "enum": ["validation_failed", "conflict", "device_revoked"]
+        }
+      }
+    },
+    "SyncPushResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["results", "serverTime"],
+      "properties": {
+        "results": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/SyncPushResult"
+          }
+        },
+        "serverTime": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        }
+      }
+    },
+    "SyncPullRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deviceId"],
+      "properties": {
+        "deviceId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "cursor": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Cursor"
+        },
+        "limit": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 100
+        }
+      }
+    },
+    "SyncChange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["changeId", "entityType", "entityId", "kind", "revision", "payload", "changedAt"],
+      "properties": {
+        "changeId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "entityType": {
+          "$ref": "#/$defs/SyncEntityType"
+        },
+        "entityId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "kind": {
+          "type": "string",
+          "enum": ["upsert", "delete"]
+        },
+        "revision": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Revision"
+        },
+        "payload": {
+          "$ref": "#/$defs/SyncPayload"
+        },
+        "changedAt": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "delete"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "properties": {
+              "payload": {
+                "type": "object",
+                "additionalProperties": false,
+                "maxProperties": 0
+              }
+            }
+          }
+        }
+      ]
+    },
+    "SyncPullResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["changes", "nextCursor", "hasMore", "serverTime"],
+      "properties": {
+        "changes": {
+          "type": "array",
+          "maxItems": 100,
+          "items": {
+            "$ref": "#/$defs/SyncChange"
+          }
+        },
+        "nextCursor": {
+          "anyOf": [
+            {
+              "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Cursor"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "hasMore": {
+          "type": "boolean"
+        },
+        "serverTime": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        }
+      }
+    },
+    "SyncConflict": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "conflictId",
+        "entityType",
+        "entityId",
+        "localRevision",
+        "remoteRevision",
+        "status",
+        "detectedAt",
+        "resolvedAt"
+      ],
+      "properties": {
+        "conflictId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "entityType": {
+          "$ref": "#/$defs/SyncEntityType"
+        },
+        "entityId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "localRevision": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Revision"
+        },
+        "remoteRevision": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Revision"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["unresolved", "client_wins", "server_wins", "merged"]
+        },
+        "detectedAt": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        },
+        "resolvedAt": {
+          "anyOf": [
+            {
+              "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "SyncTombstone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["entityType", "entityId", "revision", "deletedAt"],
+      "properties": {
+        "entityType": {
+          "$ref": "#/$defs/SyncEntityType"
+        },
+        "entityId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "revision": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Revision"
+        },
+        "deletedAt": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        }
+      }
+    }
+  }
+}

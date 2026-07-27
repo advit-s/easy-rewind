@@ -151,6 +151,41 @@ update, tombstone exclusion, restore, and delete synchronization.
 `database/setup.sql` is documented as a legacy PostgreSQL/Supabase reference
 and is not a runtime migration source.
 
+## Task 5 frozen-contract commands
+
+All GREEN commands in this section use the pinned Node `24.18.0` runtime.
+Machine-local runtime and cache paths are omitted. Results contain only test
+counts, stable failure classifications, and public-contract checksums.
+
+| Repository command                                                       | Exit | Result                                                                                                                |
+| ------------------------------------------------------------------------ | ---: | --------------------------------------------------------------------------------------------------------------------- |
+| `npm --workspace @easy-rewind/contracts test` before package             |    1 | Expected RED: the contracts workspace did not exist                                                                   |
+| `node --test packages/contracts/test/*.test.js` before implementation    |    1 | Expected RED: `1/19` passed; public modules, canonical schemas, generator, and independence validator were absent     |
+| `node --test packages/contracts/test/contracts.test.js` after validators |    1 | Intermediate GREEN `14/17`; only the missing deterministic OpenAPI generator kept three drift tests RED               |
+| Root workspace-contract test before manifest wiring                      |    1 | Expected RED: `4/6`; contracts workspace and root `test:contracts` script were absent                                 |
+| Cross-contract reminder-state test before schema alignment               |    1 | Expected RED: `4/6`; database CHECK rejected exported `due` and `failed` states while unrelated state checks passed   |
+| Cross-contract reminder-state test after schema alignment                |    0 | GREEN: all six exported reminder states accepted, unknown state rejected, and other exact vocabularies passed `6/6`   |
+| Prototype-polluted reminder transition before safety guard               |    1 | Expected RED: the custom transition validator accepted a non-JSON prototype                                           |
+| Prototype-polluted reminder transition after safety guard                |    0 | GREEN: the shared safe-value inspection rejects non-JSON prototypes                                                   |
+| First complete root gate after workspace wiring                          |    1 | Integration RED: requirements passed `17/18`; its frozen root verify string omitted the contracts suffix              |
+| `npm run test:contracts`                                                 |    0 | GREEN: strict schemas, validators, adversarial sync cases, OpenAPI drift, and independence passed `19/19`; zero skips |
+| `npm run test:migrations`                                                |    0 | GREEN: canonical migration and exact schema contracts passed `88/88`; zero skips                                      |
+| `npm --workspace backend test`                                           |    0 | GREEN: complete backend suite passed `278/278`; zero skips                                                            |
+| `node --test scripts/validation/workspace-contract.test.mjs`             |    0 | GREEN: workspace, exact dependency pins, scripts, and isolation contract passed `6/6`                                 |
+| OpenAPI generator `--check`                                              |    0 | Generated and committed OpenAPI bytes matched exactly                                                                 |
+| `npm run verify`                                                         |    0 | Full root gate passed all suites with zero failures and zero skips                                                    |
+
+The deterministic public fingerprints are:
+
+- Schema bundle SHA-256:
+  `761177f5bc8491b59a031b445250bfb885aa1adde40407bfd97132fe47cc92cc`
+- OpenAPI SHA-256:
+  `e8f8dd9dcc064ab8d8861aa5b5aa4a584b099f53963cc36347b8ae7c19df5e1b`
+
+Task 5 did not run an external npm audit. The last verified Task 2 production
+result remains `0` vulnerabilities, and the last verified full development
+result remains `16` high and `0` critical.
+
 ## Stage 2 requirement commands
 
 These are the stable commands recorded in the requirements ledger. `pending`
@@ -162,7 +197,7 @@ does not claim a passing result.
 | Requirements ledger           | `npm run test:requirements`                        | `18/18` passed                                          |
 | Lifecycle and execution modes | `npm run test:lifecycle`                           | pending                                                 |
 | Canonical schema/migrations   | `npm run test:migrations`                          | `88/88` passed; zero skips                              |
-| Frozen API contracts          | `npm run test:contracts`                           | pending                                                 |
+| Frozen API contracts          | `npm run test:contracts`                           | `19/19` passed; zero skips                              |
 | Authentication                | `node --test backend/src/auth/auth.test.js`        | pending                                                 |
 | Legacy migration/rollback     | `node --test backend/src/legacy/migration.test.js` | pending                                                 |
 | Native Electron ABI           | `npm --workspace desktop run rebuild:native`       | failing                                                 |

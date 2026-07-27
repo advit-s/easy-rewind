@@ -1,0 +1,81 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.easy-rewind.invalid/schema/common.json",
+  "$defs": {
+    "Uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "OpaqueId": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]+$"
+    },
+    "Cursor": {
+      "type": "string",
+      "minLength": 24,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z][A-Za-z0-9_-]+$"
+    },
+    "UtcMilliseconds": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 8640000000000000
+    },
+    "Revision": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 2147483647
+    },
+    "JsonPrimitive": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "number"
+        },
+        {
+          "type": "boolean"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "JsonArray": {
+      "type": "array",
+      "maxItems": 256,
+      "items": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "JsonObject": {
+      "type": "object",
+      "maxProperties": 64,
+      "propertyNames": {
+        "not": {
+          "enum": ["__proto__", "constructor", "prototype"]
+        },
+        "maxLength": 128
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/JsonValue"
+      }
+    },
+    "JsonValue": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/JsonPrimitive"
+        },
+        {
+          "$ref": "#/$defs/JsonArray"
+        },
+        {
+          "$ref": "#/$defs/JsonObject"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.easy-rewind.invalid/schema/reminders.json",
+  "$defs": {
+    "ReminderState": {
+      "type": "string",
+      "enum": ["scheduled", "snoozed", "due", "completed", "cancelled", "failed"]
+    },
+    "ReminderCreateRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profileId", "title", "scheduledFor", "timezone"],
+      "properties": {
+        "profileId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "scheduledFor": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[A-Za-z_]+(?:/[A-Za-z0-9_+-]+)+$"
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 2000
+        }
+      }
+    },
+    "ReminderUpdateRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["expectedRevision", "transitionTo"],
+      "properties": {
+        "expectedRevision": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Revision"
+        },
+        "transitionTo": {
+          "$ref": "#/$defs/ReminderState"
+        },
+        "scheduledFor": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        }
+      }
+    },
+    "Reminder": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "reminderId",
+        "profileId",
+        "title",
+        "scheduledFor",
+        "timezone",
+        "state",
+        "revision",
+        "createdAt",
+        "updatedAt"
+      ],
+      "properties": {
+        "reminderId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "profileId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "scheduledFor": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        },
+        "timezone": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "note": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "state": {
+          "$ref": "#/$defs/ReminderState"
+        },
+        "revision": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Revision"
+        },
+        "createdAt": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        },
+        "updatedAt": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        }
+      }
+    },
+    "ReminderResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reminder"],
+      "properties": {
+        "reminder": {
+          "$ref": "#/$defs/Reminder"
+        }
+      }
+    }
+  }
+}

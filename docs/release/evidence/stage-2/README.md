@@ -260,6 +260,68 @@ zero skips. Evidence contains no database paths, row content, or raw checksums.
 reference. Canonical runtime migrations never read it, and this task does not
 inspect, open, migrate, or quarantine any legacy database.
 
+## Task 5 frozen local API and sync contracts
+
+Task 5 adds the environment-neutral `@easy-rewind/contracts` workspace. Its
+public modules import only local modules and Ajv's portable ECMAScript build;
+they import no backend, Electron, DOM, React, React Native, or Node-only
+runtime API. Canonical JSON Schema 2020-12 files are compiled with Ajv `8.20.0`
+in strict mode. Contract objects reject unknown properties, and validators
+return deterministic `validation_failed` records containing only a stable
+code and safe message, never submitted values or validation paths.
+
+The frozen error response contains exactly `error.code`, `error.message`,
+`error.requestId`, and an empty `error.details` object. The stable vocabulary
+covers authentication, authorization, validation, conflict, throttling,
+versioning, cursor expiry, device revocation, internal failures, and
+unimplemented behavior. Pagination is cursor-only, caps pages at `100`, and
+requires `nextCursor` to agree with `hasMore`. Health responses expose only
+stable versions, mode, component readiness, and optional legacy-migration
+availability.
+
+Reminder states are exactly `scheduled`, `snoozed`, `due`, `completed`,
+`cancelled`, and `failed`. Completed, cancelled, and failed reminders are
+terminal. Pairing contracts separate short-lived one-use challenges, explicit
+PC confirmation, credential issue, and revocation. The opaque device
+credential is marked `writeOnly` only in the credential-issue response.
+
+Sync requests use UUID-shaped opaque identifiers, integer UTC milliseconds,
+server revisions, stable entity/operation/result/conflict vocabularies,
+bounded batches of `100`, opaque cursors, explicit tombstones, and a common
+`cursor_expired` error. Payloads are JSON objects capped at `64` direct
+properties, `32,768` serialized characters, and depth `8`; prototype
+pollution keys, cycles, duplicate operation IDs, and payload-bearing deletes
+are rejected.
+
+The Task 5 contract exposed an unreleased Task 4 mismatch: the database
+reminder CHECK omitted `due` and `failed`. A cross-contract RED failed when it
+inserted all six exported states. The unreleased `001_core.sql` CHECK was
+aligned to the exact six-state vocabulary, the test then passed, and the
+separate reminder-delivery vocabulary was not changed.
+
+`docs/api/openapi.json` is a deterministic OpenAPI `3.1.0` projection of the
+same canonical definitions. It covers relative health, session, pairing, and
+sync paths, omits a `servers` declaration, resolves every schema reference,
+and fails contract tests on byte drift. The public contract fingerprints use
+sorted schema filenames plus exact bytes for the bundle:
+
+- Schema bundle SHA-256:
+  `761177f5bc8491b59a031b445250bfb885aa1adde40407bfd97132fe47cc92cc`
+- OpenAPI SHA-256:
+  `e8f8dd9dcc064ab8d8861aa5b5aa4a584b099f53963cc36347b8ae7c19df5e1b`
+
+No listener, file write, HTTP implementation, authentication implementation,
+client change, legacy data access, or raw database hash is part of the
+contract package. No external audit was requested or run for Task 5; the last
+verified Task 2 audit counts remain unchanged.
+
+The final pinned-runtime root verification passed with workspace `41/41`,
+containment `21/21`, hygiene `63/63`, backend `278/278`, safe legacy runner
+`57/57`, requirements `18/18`, and contracts `19/19`. Every suite reported
+zero failures and zero skips. Secretlint, the direct hygiene checker, all
+workspace lint, repository format checking, extension validation, and the
+build syntax checks also passed.
+
 ## External release blocker
 
 Gemini provider revocation remains externally unconfirmed. Repository cleanup,

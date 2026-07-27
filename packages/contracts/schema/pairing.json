@@ -1,0 +1,163 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.easy-rewind.invalid/schema/pairing.json",
+  "$defs": {
+    "DeviceIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deviceId", "name", "platform", "status", "createdAt", "lastSeenAt"],
+      "properties": {
+        "deviceId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "platform": {
+          "type": "string",
+          "enum": ["android"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["pending", "active", "revoked"]
+        },
+        "createdAt": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        },
+        "lastSeenAt": {
+          "anyOf": [
+            {
+              "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "PairingChallengeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deviceName", "platform"],
+      "properties": {
+        "deviceName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "platform": {
+          "type": "string",
+          "enum": ["android"]
+        }
+      }
+    },
+    "PairingChallengeResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["challengeId", "expiresAt", "status", "oneUse"],
+      "properties": {
+        "challengeId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/OpaqueId"
+        },
+        "expiresAt": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        },
+        "status": {
+          "const": "pending_confirmation"
+        },
+        "oneUse": {
+          "const": true
+        }
+      }
+    },
+    "PairingConfirmationRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["challengeId", "confirmed"],
+      "properties": {
+        "challengeId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/OpaqueId"
+        },
+        "confirmed": {
+          "const": true
+        }
+      }
+    },
+    "PairingCredential": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["token", "tokenType", "issuedAt"],
+      "properties": {
+        "token": {
+          "type": "string",
+          "minLength": 32,
+          "maxLength": 512,
+          "pattern": "^[A-Za-z][A-Za-z0-9_-]+$",
+          "writeOnly": true
+        },
+        "tokenType": {
+          "const": "Bearer"
+        },
+        "issuedAt": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        }
+      }
+    },
+    "PairingCredentialIssueRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["challengeId"],
+      "properties": {
+        "challengeId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/OpaqueId"
+        }
+      }
+    },
+    "PairingCredentialResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["device", "credential"],
+      "properties": {
+        "device": {
+          "$ref": "#/$defs/DeviceIdentity"
+        },
+        "credential": {
+          "$ref": "#/$defs/PairingCredential"
+        }
+      }
+    },
+    "PairingRevokeRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deviceId", "reason"],
+      "properties": {
+        "deviceId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "reason": {
+          "type": "string",
+          "enum": ["user_requested", "credential_compromised", "device_lost"]
+        }
+      }
+    },
+    "PairingRevokeResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deviceId", "status", "revokedAt"],
+      "properties": {
+        "deviceId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/Uuid"
+        },
+        "status": {
+          "const": "revoked"
+        },
+        "revokedAt": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/UtcMilliseconds"
+        }
+      }
+    }
+  }
+}

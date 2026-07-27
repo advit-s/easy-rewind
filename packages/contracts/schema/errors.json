@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://contracts.easy-rewind.invalid/schema/errors.json",
+  "$defs": {
+    "ErrorDetails": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "ErrorBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message", "requestId", "details"],
+      "properties": {
+        "code": {
+          "type": "string",
+          "enum": [
+            "auth_required",
+            "auth_invalid",
+            "forbidden",
+            "not_found",
+            "validation_failed",
+            "conflict",
+            "rate_limited",
+            "internal_error",
+            "api_version_unsupported",
+            "cursor_expired",
+            "device_revoked",
+            "not_implemented"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 160,
+          "pattern": "^[^\\r\\n\\\\/]*$"
+        },
+        "requestId": {
+          "$ref": "https://contracts.easy-rewind.invalid/schema/common.json#/$defs/OpaqueId"
+        },
+        "details": {
+          "$ref": "#/$defs/ErrorDetails"
+        }
+      }
+    },
+    "ErrorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["error"],
+      "properties": {
+        "error": {
+          "$ref": "#/$defs/ErrorBody"
+        }
+      }
+    }
+  }
+}

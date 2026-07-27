@@ -520,6 +520,7 @@ test('nullable owned sync references preserve their owner when the parent is del
 });
 
 test('stable state checks accept documented states and reject unknown values', async t => {
+  const { REMINDER_STATES } = await import('../../../packages/contracts/src/reminders.js');
   const db = await migratedDatabase();
   db.prepare('INSERT INTO profiles(id, display_name, created_at, updated_at, revision) VALUES (?, ?, ?, ?, ?)').run(
     'profile-1',
@@ -535,7 +536,7 @@ test('stable state checks accept documented states and reject unknown values', a
   ).run('item-1', 'profile-1', 'article', 'Title', 1, 1, 1);
 
   await t.test('reminders', () => {
-    for (const [index, state] of ['scheduled', 'snoozed', 'completed', 'cancelled'].entries()) {
+    for (const [index, state] of REMINDER_STATES.entries()) {
       db.prepare(
         `INSERT INTO reminders(
            id, profile_id, item_id, state, due_at, created_at, updated_at, revision

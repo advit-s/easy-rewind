@@ -10,15 +10,16 @@
   "packageManager": "npm@11.6.2",
   "workspaces": [
     "backend",
-    "desktop"
+    "desktop",
+    "packages/contracts"
   ],
   "scripts": {
     "install:clean": "npm ci",
     "start": "npm run start --workspace=easy-rewind-backend",
     "dev": "npm run dev --workspace=easy-rewind-backend",
     "lint": "npm run lint --workspaces --if-present",
-    "format": "prettier --write package.json .github backend/package.json desktop/package.json scripts docs README.md SECURITY.md",
-    "format:check": "prettier --check package.json .github backend/package.json desktop/package.json scripts docs README.md SECURITY.md",
+    "format": "prettier --write package.json .github backend/package.json desktop/package.json packages/contracts scripts docs README.md SECURITY.md",
+    "format:check": "prettier --check package.json .github backend/package.json desktop/package.json packages/contracts scripts docs README.md SECURITY.md",
     "test": "npm run test:unit && npm run test:integration",
     "test:unit": "npm run test:workspace && npm run test:containment && npm run test:hygiene",
     "test:integration": "npm run test:backend && npm run test:backend:legacy-safe",
@@ -29,11 +30,12 @@
     "test:backend": "npm --workspace backend test",
     "test:migrations": "npm --workspace backend run test:migrations",
     "test:backend:legacy-safe": "node scripts/testing/run-legacy-backend-tests.mjs",
+    "test:contracts": "npm --workspace @easy-rewind/contracts test",
     "validate:extension": "node scripts/validation/validate-extension.mjs",
     "scan:secrets": "secretlint \"**/*\"",
     "check:hygiene": "node scripts/hygiene/check-repository.mjs",
     "build": "npm run validate:extension && node --check backend/server.js && node --check desktop/main.js",
-    "verify": "npm run verify:stage1 && npm run test:requirements",
+    "verify": "npm run verify:stage1 && npm run test:requirements && npm run test:contracts",
     "verify:stage1": "npm run scan:secrets && npm run check:hygiene && npm run lint && npm run format:check && npm test && npm run build",
     "desktop:dev": "npm run dev --workspace=easy-rewind-desktop",
     "desktop:build": "npm run build --workspace=easy-rewind-desktop",
