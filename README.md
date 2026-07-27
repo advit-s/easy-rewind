@@ -93,7 +93,7 @@ easy-rewind/
 │   └── dashboard.html          — Analytics dashboard
 │
 └── database/
-    └── setup.sql               — Reference schema (SQLite creates tables automatically)
+    └── setup.sql               — Legacy PostgreSQL/Supabase reference; never used at runtime
 ```
 
 ---

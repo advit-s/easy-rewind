@@ -27,6 +27,7 @@
     "test:hygiene": "node --test scripts/hygiene/check-repository.test.mjs",
     "test:requirements": "node --test scripts/validation/stage2-requirements.test.mjs",
     "test:backend": "npm --workspace backend test",
+    "test:migrations": "npm --workspace backend run test:migrations",
     "test:backend:legacy-safe": "node scripts/testing/run-legacy-backend-tests.mjs",
     "validate:extension": "node scripts/validation/validate-extension.mjs",
     "scan:secrets": "secretlint \"**/*\"",

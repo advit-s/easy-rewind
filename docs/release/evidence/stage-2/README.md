@@ -195,6 +195,43 @@ module directory and then rebuilt `better-sqlite3` successfully. That
 diagnostic narrows the staging-layout defect; it does not count as the final
 script fix or Electron ABI acceptance evidence.
 
+## Task 4 canonical SQLite boundary
+
+Task 4 adds an import-inert database opener and a canonical migration runner
+without changing the legacy route helper. The opener accepts only an exact
+absolute path whose regular parent already exists, rejects linked ancestry and
+targets, configures foreign keys and a bounded busy timeout, uses WAL for
+writable databases, uses query-only mode for readonly databases, invokes the
+restrictive permission adapter, and makes close idempotent. It never logs a
+path or row value.
+
+Three exact-byte SHA-256 migrations define the canonical schema. The runner
+accepts only contiguous `NNN_name.sql` files beginning at version one,
+requires unique stable versions and names, verifies all applied checksums
+before pending work, rejects newer database versions, and applies each pending
+migration in an immediate transaction. Concurrent writers either serialize or
+receive a stable busy error after the configured timeout, with in-transaction
+history revalidation preventing stale application decisions.
+
+The canonical schema contains all required owner-scoped content, reminder,
+learning, authentication, job, and sync tables. Externally synchronized domain
+rows use text identifiers, integer-millisecond timestamps, revisions, and
+tombstones. Foreign keys, state checks, live-row uniqueness, owner-scoped
+covering indexes, operation deduplication, and FTS5 item-search triggers are
+verified through behavior. Deleted items are absent from search and restored
+items are indexed again.
+
+The initial focused RED run failed `0/21` because the opener and migration
+runner did not exist. Additional focused RED checks captured future-version
+classification, connection-endpoint uniqueness, and lazy native-dependency
+loading defects before their fixes. The stable root migration command now
+passes `49/49`; the complete backend suite passes `239/239`, with zero skips.
+Evidence contains no database paths, row content, or raw checksums.
+
+`database/setup.sql` is retained only as a legacy PostgreSQL/Supabase
+reference. Canonical runtime migrations never read it, and this task does not
+inspect, open, migrate, or quarantine any legacy database.
+
 ## External release blocker
 
 Gemini provider revocation remains externally unconfirmed. Repository cleanup,

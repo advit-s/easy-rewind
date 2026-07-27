@@ -1,9 +1,12 @@
+-- LEGACY REFERENCE ONLY: PostgreSQL/Supabase schema from the pre-canonical application.
+-- It is not executable by the Easy Rewind runtime and must never be used for migration discovery.
+-- Canonical runtime SQLite schema changes live only in backend/src/database/migrations/.
+--
 -- ═══════════════════════════════════════════════════════════
 -- easy-rewind Learning Assistant — Reference Schema
 --
--- This schema is auto-created by backend/routes/api.js on startup.
--- This file is kept as a reference for the table structure only.
--- The actual runtime uses SQLite (via better-sqlite3), not PostgreSQL.
+-- This file is kept only to document the legacy hosted schema shape.
+-- Runtime code and the canonical migration runner never read this file.
 -- ═══════════════════════════════════════════════════════════
 
 -- ─────────────────────────────────────────────
