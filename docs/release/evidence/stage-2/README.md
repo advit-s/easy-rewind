@@ -224,9 +224,16 @@ items are indexed again.
 The initial focused RED run failed `0/21` because the opener and migration
 runner did not exist. Additional focused RED checks captured future-version
 classification, connection-endpoint uniqueness, and lazy native-dependency
-loading defects before their fixes. The stable root migration command now
-passes `49/49`; the complete backend suite passes `239/239`, with zero skips.
-Evidence contains no database paths, row content, or raw checksums.
+loading defects before their fixes. A bounded follow-up RED failed `0/1`
+because the exact expectation maps were intentionally empty while all `26`
+relational tables were required. The populated contract now freezes every
+ordered column, named and automatic index, indexed-column order, uniqueness,
+partial-index flag, foreign-key action, migration-metadata primary key, FTS
+public column, and FTS shadow table. The PRAGMA audit found no schema mismatch,
+so migration SQL and checksums did not change. The stable root migration
+command now passes `54/54`; the complete backend suite passes `244/244`, with
+zero skips. Evidence contains no database paths, row content, or raw
+checksums.
 
 `database/setup.sql` is retained only as a legacy PostgreSQL/Supabase
 reference. Canonical runtime migrations never read it, and this task does not

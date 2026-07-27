@@ -6,6 +6,14 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const test = require('node:test');
 
+const {
+  expectedColumns,
+  expectedForeignKeys,
+  expectedFtsContract,
+  expectedIndexes,
+  expectedMigrationMetadata,
+} = require('./schema-contract.fixture');
+
 const temporaryRoots = new Set();
 const requiredTables = [
   'bookmarks',
@@ -36,6 +44,7 @@ const requiredTables = [
   'sync_operations',
   'tags',
 ];
+const requiredRelationalTables = requiredTables.filter(table => table !== 'items_fts');
 
 function makePath() {
   const root = mkdtempSync(join(tmpdir(), 'easy-rewind-schema-'));
@@ -65,6 +74,41 @@ function tableColumns(db, table) {
     .map(column => column.name);
 }
 
+function quotedIdentifier(value) {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
+function tableIndexes(db, table) {
+  return db
+    .prepare(`PRAGMA index_list(${quotedIdentifier(table)})`)
+    .all()
+    .map(index => ({
+      name: index.name,
+      unique: Boolean(index.unique),
+      origin: index.origin,
+      partial: Boolean(index.partial),
+      columns: db
+        .prepare(`PRAGMA index_info(${quotedIdentifier(index.name)})`)
+        .all()
+        .map(column => column.name),
+    }))
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
+function tableForeignKeys(db, table) {
+  return db
+    .prepare(`PRAGMA foreign_key_list(${quotedIdentifier(table)})`)
+    .all()
+    .map(foreignKey => ({
+      from: foreignKey.from,
+      table: foreignKey.table,
+      to: foreignKey.to,
+      onUpdate: foreignKey.on_update,
+      onDelete: foreignKey.on_delete,
+    }))
+    .sort((left, right) => left.from.localeCompare(right.from));
+}
+
 function assertConstraint(db, sql, parameters = []) {
   assert.throws(() => db.prepare(sql).run(...parameters), /CHECK constraint failed/i);
 }
@@ -89,6 +133,84 @@ test('canonical schema exposes the exact required application tables', async () 
 
   assert.deepEqual(actual, requiredTables);
   db.close();
+});
+
+test('every relational table has exact ordered columns', async () => {
+  const db = await migratedDatabase();
+  try {
+    assert.deepEqual(Object.keys(expectedColumns).sort(), requiredRelationalTables);
+    for (const table of requiredRelationalTables) {
+      assert.deepEqual(tableColumns(db, table), expectedColumns[table], `${table} columns`);
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test('every relational table has exact named and automatic indexes', async () => {
+  const db = await migratedDatabase();
+  try {
+    assert.deepEqual(Object.keys(expectedIndexes).sort(), requiredRelationalTables);
+    for (const table of requiredRelationalTables) {
+      assert.deepEqual(
+        tableIndexes(db, table),
+        expectedIndexes[table].toSorted((left, right) => left.name.localeCompare(right.name)),
+        `${table} indexes`
+      );
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test('every relational table has exact foreign-key actions', async () => {
+  const db = await migratedDatabase();
+  try {
+    assert.deepEqual(Object.keys(expectedForeignKeys).sort(), requiredRelationalTables);
+    for (const table of requiredRelationalTables) {
+      assert.deepEqual(tableForeignKeys(db, table), expectedForeignKeys[table], `${table} foreign keys`);
+    }
+  } finally {
+    db.close();
+  }
+});
+
+test('schema migration metadata has exact columns and integer primary key', async () => {
+  const db = await migratedDatabase();
+  try {
+    const metadata = db
+      .prepare('PRAGMA table_info(schema_migrations)')
+      .all()
+      .map(({ name, type, notnull, pk }) => ({ name, type, notnull, pk }));
+    assert.deepEqual(metadata, expectedMigrationMetadata);
+  } finally {
+    db.close();
+  }
+});
+
+test('FTS exposes only intended public columns and characterized internal shadow tables', async () => {
+  const db = await migratedDatabase();
+  try {
+    assert.deepEqual(tableColumns(db, 'items_fts'), expectedFtsContract.publicColumns);
+    assert.match(
+      db.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'items_fts'").pluck().get(),
+      /^CREATE VIRTUAL TABLE items_fts USING fts5\(/i
+    );
+    assert.deepEqual(
+      db
+        .prepare(
+          `SELECT name
+           FROM sqlite_master
+           WHERE type = 'table' AND name LIKE 'items_fts_%'
+           ORDER BY name`
+        )
+        .pluck()
+        .all(),
+      expectedFtsContract.shadowTables
+    );
+  } finally {
+    db.close();
+  }
 });
 
 test('syncable domain rows carry owner, UUID, timestamps, revisions, and tombstones', async () => {

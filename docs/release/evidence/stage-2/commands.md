@@ -104,8 +104,9 @@ migration checksums.
 | Focused non-contiguous future-version regression before fix        |    1 | Expected RED: `0/1`; corrupt future history returned the history error instead of the safe newer-version error |
 | Focused connection-endpoint uniqueness contract before index       |    1 | Expected RED: `0/1`; the live endpoint uniqueness index was absent                                             |
 | Focused lazy native-dependency import regression before fix        |    1 | Expected RED: `0/1`; importing the opener loaded the native database dependency                                |
-| `npm run test:migrations`                                          |    0 | GREEN: canonical opener, runner, schema, concurrency, and FTS contracts `49/49`; zero skips                    |
-| `npm --workspace backend test`                                     |    0 | Complete backend suite `239/239`; inherited `190/190` preserved; zero skips                                    |
+| Focused exact relational contract before map population            |    1 | Expected RED: `0/1`; all `26` relational tables were required while the exact expectation maps were empty      |
+| `npm run test:migrations`                                          |    0 | GREEN: canonical opener, runner, exact schema, concurrency, and FTS contracts `54/54`; zero skips              |
+| `npm --workspace backend test`                                     |    0 | Complete backend suite `244/244`; inherited `190/190` preserved; zero skips                                    |
 | `npm run lint`                                                     |    0 | Backend lint completed with zero warnings                                                                      |
 | `npm run format:check`                                             |    0 | All configured files matched repository formatting                                                             |
 | `npm run verify`                                                   |    0 | Full root gate passed under Node `24.18.0`, including Secretlint, hygiene, tests, build, and requirements      |
@@ -128,9 +129,15 @@ unlinked ancestry/targets are enforced without creating directories.
 The canonical three-migration schema exposes the required tables, owner
 relationships, UTC integer-millisecond timestamps, revisions, tombstones,
 state checks, deduplication and covering indexes, and FTS5 item search.
-Behavior tests cover insert, content update, tombstone exclusion, restore, and
-delete synchronization. `database/setup.sql` is documented as a legacy
-PostgreSQL/Supabase reference and is not a runtime migration source.
+The exact contract freezes ordered columns for all `26` relational tables,
+every named and SQLite-generated automatic index with ordered columns and
+uniqueness, every foreign-key action, and the migration metadata primary key.
+FTS coverage separately freezes the public virtual-table columns and five
+internal shadow tables. The PRAGMA audit found no SQL mismatch, so no migration
+bytes changed. Behavior tests cover insert, content update, tombstone
+exclusion, restore, and delete synchronization. `database/setup.sql` is
+documented as a legacy PostgreSQL/Supabase reference and is not a runtime
+migration source.
 
 ## Stage 2 requirement commands
 
@@ -142,7 +149,7 @@ does not claim a passing result.
 | ----------------------------- | -------------------------------------------------- | ------------------------------------------------------- |
 | Requirements ledger           | `npm run test:requirements`                        | `18/18` passed                                          |
 | Lifecycle and execution modes | `npm run test:lifecycle`                           | pending                                                 |
-| Canonical schema/migrations   | `npm run test:migrations`                          | `49/49` passed; zero skips                              |
+| Canonical schema/migrations   | `npm run test:migrations`                          | `54/54` passed; zero skips                              |
 | Frozen API contracts          | `npm run test:contracts`                           | pending                                                 |
 | Authentication                | `node --test backend/src/auth/auth.test.js`        | pending                                                 |
 | Legacy migration/rollback     | `node --test backend/src/legacy/migration.test.js` | pending                                                 |
