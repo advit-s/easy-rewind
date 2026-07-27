@@ -25,6 +25,8 @@ test('two test environments never share runtime paths', async () => {
     assert.equal(first.generateId(), 'test-id-0001');
     assert.equal(first.generateId(), 'test-id-0002');
     assert.deepEqual(first.scheduler, { enabled: false });
+    assert.equal(first.env.GEMINI_API_KEY, '');
+    assert.equal(second.env.GEMINI_API_KEY, '');
   } finally {
     await first.cleanup();
     await second.cleanup();

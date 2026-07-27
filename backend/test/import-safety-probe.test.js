@@ -23,7 +23,7 @@ function fixtureEntries(root) {
 }
 
 function removeFixture(root) {
-  rmSync(root, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
 }
 
 test('probe detects environment and exported runtime-config mutations without reporting values', () => {
@@ -176,6 +176,117 @@ test('probe detects and blocks write streams without creating their target', () 
     );
     assert.equal(result.report.pathsChanged, false);
     assert.deepEqual(fixtureEntries(root), before);
+  } finally {
+    removeFixture(root);
+  }
+});
+
+test('probe denies every child-process entry point without exposing commands or touching external targets', () => {
+  const root = createFixture({
+    'external/sentinel.txt': 'original',
+    'source/placeholder.txt': '',
+  });
+  const sourceRoot = join(root, 'source');
+  const externalTarget = join(root, 'external', 'sentinel.txt');
+  const writeCode = `require('node:fs').writeFileSync(${JSON.stringify(externalTarget)}, 'changed')`;
+  writeFileSync(
+    join(sourceRoot, 'processes.js'),
+    `
+      const childProcess = require('node:child_process');
+      const executable = process.execPath;
+      const writeCode = ${JSON.stringify(writeCode)};
+      const command = [JSON.stringify(executable), '-e', JSON.stringify(writeCode)].join(' ');
+      childProcess.spawnSync(executable, ['-e', writeCode]);
+      childProcess.execSync(command);
+      childProcess.execFileSync(executable, ['-e', writeCode]);
+      for (const invoke of [
+        () => childProcess.spawn(null),
+        () => childProcess.exec(null),
+        () => childProcess.execFile(null),
+        () => childProcess.fork(null),
+      ]) {
+        try { invoke(); } catch {}
+      }
+    `
+  );
+
+  try {
+    const result = runImportProbe({
+      modules: [join(sourceRoot, 'processes.js')],
+      sourceRoot,
+    });
+
+    assert.equal(result.status, 1);
+    assert.deepEqual(result.report.violations.map(({ operation }) => operation).sort(), [
+      'child_process.exec',
+      'child_process.execFile',
+      'child_process.execFileSync',
+      'child_process.execSync',
+      'child_process.fork',
+      'child_process.spawn',
+      'child_process.spawnSync',
+    ]);
+    assert.equal(readFileSync(externalTarget, 'utf8'), 'original');
+    assert.equal(JSON.stringify(result.report).includes(externalTarget), false);
+  } finally {
+    removeFixture(root);
+  }
+});
+
+test('probe denies global, node:timers, and node:timers/promises scheduling entry points', () => {
+  const root = createFixture({
+    'timers.js': `
+      const timers = require('node:timers');
+      const timerPromises = require('node:timers/promises');
+      setImmediate(() => {});
+      timers.setTimeout(() => {}, 1).unref();
+      timers.setInterval(() => {}, 1).unref();
+      timers.setImmediate(() => {}).unref();
+      void timerPromises.setTimeout(1, undefined, { ref: false });
+      void timerPromises.setImmediate(undefined, { ref: false });
+      void timerPromises.setInterval(1, undefined, { ref: false }).next();
+      void timerPromises.scheduler.wait(1);
+      void timerPromises.scheduler.yield();
+    `,
+  });
+
+  try {
+    const result = runImportProbe({ modules: [join(root, 'timers.js')], sourceRoot: root });
+
+    assert.equal(result.status, 1);
+    assert.deepEqual(result.report.violations.map(({ operation }) => operation).sort(), [
+      'setImmediate',
+      'timers.setImmediate',
+      'timers.setInterval',
+      'timers.setTimeout',
+      'timers/promises.scheduler.wait',
+      'timers/promises.scheduler.yield',
+      'timers/promises.setImmediate',
+      'timers/promises.setInterval',
+      'timers/promises.setTimeout',
+    ]);
+  } finally {
+    removeFixture(root);
+  }
+});
+
+test('probe denies Worker construction without touching external targets', () => {
+  const root = createFixture({
+    'external/sentinel.txt': 'original',
+    'source/worker.js': `
+      const { Worker } = require('node:worker_threads');
+      new Worker("process.exit(0)", { eval: true });
+    `,
+  });
+  const sourceRoot = join(root, 'source');
+  const externalTarget = join(root, 'external', 'sentinel.txt');
+
+  try {
+    const result = runImportProbe({ modules: [join(sourceRoot, 'worker.js')], sourceRoot });
+
+    assert.equal(result.status, 1);
+    assert.ok(result.report.violations.some(({ operation }) => operation === 'worker_threads.Worker'));
+    assert.equal(readFileSync(externalTarget, 'utf8'), 'original');
   } finally {
     removeFixture(root);
   }

@@ -179,50 +179,110 @@ function startSchedulers(origin) {
   return intervals;
 }
 
-async function startServer(options = {}) {
-  require('dotenv').config();
-  const { closeDb, loadSettings } = require('./routes/helpers');
-  loadSettings();
+function listen(app, port, host) {
+  let listener;
+  return new Promise((resolve, reject) => {
+    const removeStartupListeners = () => {
+      listener?.removeListener('error', onError);
+      listener?.removeListener('listening', onListening);
+    };
+    const onError = error => {
+      removeStartupListeners();
+      try {
+        listener.close(() => reject(error));
+      } catch {
+        reject(error);
+      }
+    };
+    const onListening = () => {
+      removeStartupListeners();
+      resolve(listener);
+    };
 
-  const app = options.app || createApp(options);
-  const port = Number.parseInt(options.port ?? process.env.PORT ?? '5000', 10);
-  const host = options.host;
-  const server = await new Promise((resolve, reject) => {
-    const listener = host ? app.listen(port, host, () => resolve(listener)) : app.listen(port, () => resolve(listener));
-    listener.once('error', reject);
+    try {
+      listener = host ? app.listen(port, host) : app.listen(port);
+      listener.once('error', onError);
+      listener.once('listening', onListening);
+    } catch (error) {
+      removeStartupListeners();
+      reject(error);
+    }
   });
-  const address = server.address();
-  const actualPort = typeof address === 'object' ? address.port : port;
-  const origin = `http://127.0.0.1:${actualPort}`;
-  const schedulersEnabled = options.schedulersEnabled ?? process.env.EASY_REWIND_SCHEDULERS_ENABLED !== 'false';
-  const intervals = schedulersEnabled ? startSchedulers(origin) : [];
-  let closePromise;
+}
 
-  console.log(`[Server] API listening at ${origin}/api`);
-  if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'your_gemini_api_key_here') {
-    console.warn('WARNING: Gemini API key not configured; AI quick-lookup will use fallback responses.');
+async function closeRuntimeResources({ app, closeDb, intervals = [], server }) {
+  let cleanupError;
+  for (const interval of intervals) clearInterval(interval);
+
+  try {
+    if (server?.listening) {
+      await new Promise((resolve, reject) => {
+        server.close(error => (error ? reject(error) : resolve()));
+      });
+    }
+  } catch (error) {
+    cleanupError = error;
   }
 
-  return {
-    app,
-    server,
-    origin,
-    close() {
-      if (!closePromise) {
-        closePromise = (async () => {
-          for (const interval of intervals) clearInterval(interval);
-          if (server.listening) {
-            await new Promise((resolve, reject) => {
-              server.close(error => (error ? reject(error) : resolve()));
-            });
-          }
-          app.locals.close?.();
-          closeDb();
-        })();
-      }
-      return closePromise;
-    },
-  };
+  try {
+    app?.locals.close?.();
+  } catch (error) {
+    cleanupError ||= error;
+  }
+
+  try {
+    closeDb();
+  } catch (error) {
+    cleanupError ||= error;
+  }
+
+  if (cleanupError) throw cleanupError;
+}
+
+async function startServer(options = {}) {
+  require('dotenv').config();
+  const { closeDb, resetRuntimeState } = require('./routes/helpers');
+  let app;
+  let server;
+  let intervals = [];
+
+  try {
+    resetRuntimeState();
+    app = options.app || createApp(options);
+    const port = Number.parseInt(options.port ?? process.env.PORT ?? '5000', 10);
+    const host = options.host;
+    server = await listen(app, port, host);
+    const address = server.address();
+    const actualPort = typeof address === 'object' ? address.port : port;
+    const origin = `http://127.0.0.1:${actualPort}`;
+    const schedulersEnabled = options.schedulersEnabled ?? process.env.EASY_REWIND_SCHEDULERS_ENABLED !== 'false';
+    intervals = schedulersEnabled ? startSchedulers(origin) : [];
+    let closePromise;
+
+    console.log(`[Server] API listening at ${origin}/api`);
+    if (!process.env.GEMINI_API_KEY || process.env.GEMINI_API_KEY === 'your_gemini_api_key_here') {
+      console.warn('WARNING: Gemini API key not configured; AI quick-lookup will use fallback responses.');
+    }
+
+    return {
+      app,
+      server,
+      origin,
+      close() {
+        if (!closePromise) {
+          closePromise = closeRuntimeResources({ app, closeDb, intervals, server });
+        }
+        return closePromise;
+      },
+    };
+  } catch (startupError) {
+    try {
+      await closeRuntimeResources({ app, closeDb, intervals, server });
+    } catch {
+      // Preserve the startup error after best-effort cleanup.
+    }
+    throw startupError;
+  }
 }
 
 if (require.main === module) {

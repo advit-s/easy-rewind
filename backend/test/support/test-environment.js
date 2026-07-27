@@ -81,6 +81,7 @@ async function createTestEnvironment(options = {}) {
       EASY_REWIND_FIXED_TIME: fixedTime,
       EASY_REWIND_PROFILE_USER_ID: 'test-profile',
       EASY_REWIND_SCHEDULERS_ENABLED: 'false',
+      GEMINI_API_KEY: '',
     }),
     async cleanup() {
       if (cleaned) return;

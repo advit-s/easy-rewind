@@ -16,14 +16,16 @@ release evidence must not contain personal absolute paths.
 
 ## Task 2 isolated-test commands
 
-| Repository command                                              | Exit | Result                                                               |
-| --------------------------------------------------------------- | ---: | -------------------------------------------------------------------- |
-| `npm --workspace backend test`                                  |    0 | Node test runner `73/73`; inherited API/mail coverage `57/57`        |
-| `node --test scripts/testing/run-legacy-backend-tests.test.mjs` |    0 | Safe disposable-copy runner contract `9/9`                           |
-| `node scripts/testing/run-legacy-backend-tests.mjs`             |    0 | Disposable backend copy; isolated runtime; inherited tests `57/57`   |
-| `node --test backend/test/import-safety*.test.js`               |    0 | Import probe and production imports `9/9`; no residual resources     |
-| `npm audit --omit=dev`                                          |    0 | Production dependencies: `0` vulnerabilities                         |
-| `npm audit`                                                     |    1 | Full tree: `16` high, `0` critical; Electron packaging chain remains |
+| Repository command                                                                                                                                                 | Exit | Result                                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---: | -------------------------------------------------------------------- |
+| `npm --workspace backend test`                                                                                                                                     |    0 | Node test runner `81/81`; inherited API/mail coverage `57/57`        |
+| `node --test scripts/testing/run-legacy-backend-tests.test.mjs`                                                                                                    |    0 | Safe disposable-copy runner contract `9/9`                           |
+| `node scripts/testing/run-legacy-backend-tests.mjs`                                                                                                                |    0 | Disposable backend copy; isolated runtime; inherited tests `57/57`   |
+| `node --test backend/test/import-safety.test.js backend/test/import-safety-probe.test.js backend/test/runtime-state.test.js backend/test/server-lifecycle.test.js` |    0 | Probe/import, runtime reset, and lifecycle cleanup `17/17`           |
+| `npm ci`                                                                                                                                                           |    0 | Lockfile-clean install: `525` packages added; `528` audited          |
+| `npm ls jest --all`                                                                                                                                                |    1 | Expected empty dependency tree; no installed Jest package            |
+| `npm audit --omit=dev`                                                                                                                                             |    0 | Production dependencies: `0` vulnerabilities                         |
+| `npm audit`                                                                                                                                                        |    1 | Full tree: `16` high, `0` critical; Electron packaging chain remains |
 
 All commands in this section used Node `24.18.0`. The failed full audit is
 retained as a truthful advisory finding; no forced audit fix or broad
@@ -37,17 +39,23 @@ version query used only an in-memory database.
 The original Task 2 RED runs were intentionally failing and are recorded here
 without raw paths, environment values, credentials, file contents, or hashes:
 
-| RED check                        | Exit | Sanitized observed failure                                                                         |
-| -------------------------------- | ---: | -------------------------------------------------------------------------------------------------- |
-| Production import-safety         |    1 | Import created one listener, two scheduler resources, attempted a settings write, and read `.env`  |
-| Injected database-path contract  |    1 | Helpers selected the fixed repository database instead of the unique external test path            |
-| Isolated support-helper contract |    1 | Required test-environment and ephemeral-server helper modules/exports did not exist                |
-| Strengthened probe fixture suite |    1 | Environment/config, callback, promise, stream, and non-timeout resource fixtures escaped detection |
+| RED check                        | Exit | Sanitized observed failure                                                                                      |
+| -------------------------------- | ---: | --------------------------------------------------------------------------------------------------------------- |
+| Production import-safety         |    1 | Import created one listener, two scheduler resources, attempted a settings write, and read `.env`               |
+| Injected database-path contract  |    1 | Helpers selected the fixed repository database instead of the unique external test path                         |
+| Isolated support-helper contract |    1 | Required test-environment and ephemeral-server helper modules/exports did not exist                             |
+| Strengthened probe fixture suite |    1 | Environment/config, callback, promise, stream, and non-timeout resource fixtures escaped detection              |
+| Process/timer/worker isolation   |    1 | Subprocess entry points, timer-module schedulers, promise schedulers, and Worker construction escaped detection |
+| Sequential runtime environments  |    1 | A missing settings file inherited the previous model, review interval, and initialized AI client                |
+| Failed listen and close cleanup  |    1 | An occupied port left app timers/database open; close rejection skipped app/database cleanup                    |
 
-After implementation, the focused Node test command passes `9/9`: eight
-adversarial probe fixtures and one production-module import check. The probe
-compares exact baseline handle identities and the complete resource-type
-multiset after event-loop settling; it uses no resource-type allowlist.
+After implementation, the focused Node test command passes `17/17`: eleven
+probe regression fixtures, one production-module import check, two sequential
+runtime-state checks, and three listener/runtime-close lifecycle checks. The
+probe compares exact baseline handle identities and the complete resource-type
+multiset after event-loop settling; it uses no resource-type allowlist. Denied
+subprocess reports retain only fixed operation labels, never commands,
+arguments, paths, or environment values.
 
 ## Historical Jest baseline
 

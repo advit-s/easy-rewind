@@ -14,8 +14,8 @@ const axios = require('axios');
 // ─────────────────────────────────────────────
 // Runtime Configuration (mutable — changes visible to all importers)
 // ─────────────────────────────────────────────
-const config = {
-  apiKey: process.env.GEMINI_API_KEY || null,
+const DEFAULT_CONFIG = Object.freeze({
+  apiKey: null,
   model: 'gemini-2.5-flash',
   apiBaseUrl: 'http://localhost:5000',
   summarizationBackend: 'auto',
@@ -23,10 +23,20 @@ const config = {
   reviewIntervalDays: 3,
   profileUserId: null,
   embedProvider: 'auto',
-};
+  digestPrefs: null,
+});
+const config = { ...DEFAULT_CONFIG, apiKey: process.env.GEMINI_API_KEY || null };
 
 let db = null;
 let genAI = null;
+
+function resetRuntimeConfiguration() {
+  for (const key of Object.keys(config)) delete config[key];
+  Object.assign(config, DEFAULT_CONFIG, {
+    apiKey: process.env.GEMINI_API_KEY || null,
+  });
+  genAI = null;
+}
 
 function getDatabasePath() {
   return path.resolve(process.env.DATABASE_PATH || path.join(__dirname, '..', 'data', 'easy-rewind.db'));
@@ -301,6 +311,7 @@ function closeDb() {
 // Settings (persisted to settings.json)
 // ─────────────────────────────────────────────
 function loadSettings() {
+  resetRuntimeConfiguration();
   const settingsPath = getSettingsPath();
   try {
     if (fs.existsSync(settingsPath)) {
@@ -388,6 +399,12 @@ function getGenAI() {
 
 function resetGenAI() {
   genAI = null;
+}
+
+function resetRuntimeState(options = {}) {
+  closeDb();
+  resetRuntimeConfiguration();
+  if (options.loadSettings !== false) loadSettings();
 }
 
 async function callGemini(prompt) {
@@ -787,6 +804,7 @@ function detectSourceType(url) {
 // Exports
 // ─────────────────────────────────────────────
 module.exports = {
+  DEFAULT_CONFIG,
   config,
   getDatabasePath,
   getSettingsPath,
@@ -796,6 +814,7 @@ module.exports = {
   saveSettings,
   getGenAI,
   resetGenAI,
+  resetRuntimeState,
   callGemini,
   getUserId,
   normalizeDate,

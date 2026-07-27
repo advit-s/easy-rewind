@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const { afterEach, beforeEach, describe, test } = require('node:test');
 const supertest = require('supertest');
-const { closeDb, loadSettings } = require('../routes/helpers');
+const { closeDb, resetRuntimeState } = require('../routes/helpers');
 const { createApp } = require('../server');
 const { createTestEnvironment } = require('./support/test-environment');
 const { startTestServer } = require('./support/test-server');
@@ -16,6 +16,7 @@ const runtimeEnvironmentKeys = [
   'EASY_REWIND_FIXED_TIME',
   'EASY_REWIND_PROFILE_USER_ID',
   'EASY_REWIND_SCHEDULERS_ENABLED',
+  'GEMINI_API_KEY',
 ];
 let environment;
 let server;
@@ -26,7 +27,7 @@ beforeEach(async () => {
   environment = await createTestEnvironment();
   previousEnvironment = Object.fromEntries(runtimeEnvironmentKeys.map(key => [key, process.env[key]]));
   Object.assign(process.env, environment.env);
-  loadSettings();
+  resetRuntimeState();
   const app = createApp({ rateLimitsEnabled: false, requestLogging: false });
   server = await startTestServer(app);
   request = supertest(server.origin);
@@ -36,6 +37,7 @@ afterEach(async () => {
   await server?.close();
   closeDb();
   await environment?.cleanup();
+  resetRuntimeState({ loadSettings: false });
   for (const key of runtimeEnvironmentKeys) {
     if (previousEnvironment[key] === undefined) delete process.env[key];
     else process.env[key] = previousEnvironment[key];

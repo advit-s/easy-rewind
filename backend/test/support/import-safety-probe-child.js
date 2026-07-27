@@ -1,6 +1,8 @@
 'use strict';
 
+const childProcess = require('node:child_process');
 const crypto = require('node:crypto');
+const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const fsPromises = require('node:fs/promises');
 const { syncBuiltinESMExports } = require('node:module');
@@ -8,6 +10,9 @@ const net = require('node:net');
 const os = require('node:os');
 const path = require('node:path');
 const { Writable } = require('node:stream');
+const timers = require('node:timers');
+const timerPromises = require('node:timers/promises');
+const workerThreads = require('node:worker_threads');
 
 const modules = JSON.parse(process.env.EASY_REWIND_IMPORT_MODULES);
 const sourceRoot = path.resolve(process.env.EASY_REWIND_IMPORT_SOURCE_ROOT);
@@ -134,16 +139,22 @@ const environmentMutationKeys = new Set();
 const originalEnvironment = process.env;
 const environmentDescriptor = Object.getOwnPropertyDescriptor(process, 'env');
 const environmentBaseline = Object.fromEntries(Object.entries(originalEnvironment));
+const runtimePropertyRestorations = [];
 const original = {
   fs: new Map(),
   fsPromises: new Map(),
   listen: net.Server.prototype.listen,
+  setImmediate: global.setImmediate,
   setInterval: global.setInterval,
   setTimeout: global.setTimeout,
 };
 
 function recordViolation(operation, target) {
   violations.push({ operation, path: safePath(target) });
+}
+
+function recordRuntimeViolation(operation, category) {
+  violations.push({ operation, path: category });
 }
 
 function recordEnvironmentMutation(operation, key) {
@@ -184,6 +195,16 @@ Object.defineProperty(process, 'env', {
 function replace(target, originals, name, implementation) {
   if (typeof target[name] !== 'function') return;
   originals.set(name, target[name]);
+  target[name] = implementation;
+}
+
+function replaceRuntimeProperty(target, name, implementation) {
+  if (typeof target[name] !== 'function') return;
+  runtimePropertyRestorations.push({
+    target,
+    name,
+    descriptor: Object.getOwnPropertyDescriptor(target, name),
+  });
   target[name] = implementation;
 }
 
@@ -390,9 +411,9 @@ replace(fsPromises, original.fsPromises, 'mkdtempDisposable', async function (ta
   };
 });
 
-global.setInterval = function () {
-  violations.push({ operation: 'setInterval', path: 'scheduler' });
+function deniedTimerHandle() {
   return {
+    close() {},
     hasRef: () => false,
     ref() {
       return this;
@@ -403,25 +424,159 @@ global.setInterval = function () {
     unref() {
       return this;
     },
+    [Symbol.toPrimitive]() {
+      return 0;
+    },
   };
+}
+
+function deniedAsyncIterator() {
+  return {
+    async next() {
+      return { done: true, value: undefined };
+    },
+    async return() {
+      return { done: true, value: undefined };
+    },
+    [Symbol.asyncIterator]() {
+      return this;
+    },
+  };
+}
+
+class DeniedChildProcess extends EventEmitter {
+  constructor() {
+    super();
+    this.connected = false;
+    this.exitCode = 0;
+    this.killed = true;
+    this.pid = undefined;
+    this.signalCode = null;
+    this.stderr = null;
+    this.stdin = null;
+    this.stdout = null;
+  }
+
+  disconnect() {}
+
+  kill() {
+    return false;
+  }
+
+  ref() {
+    return this;
+  }
+
+  send() {
+    return false;
+  }
+
+  unref() {
+    return this;
+  }
+}
+
+for (const name of ['spawn', 'exec', 'execFile', 'fork']) {
+  replaceRuntimeProperty(childProcess, name, function () {
+    recordRuntimeViolation(`child_process.${name}`, 'process');
+    return new DeniedChildProcess();
+  });
+}
+
+replaceRuntimeProperty(childProcess, 'spawnSync', function () {
+  recordRuntimeViolation('child_process.spawnSync', 'process');
+  return {
+    error: undefined,
+    output: [null, Buffer.alloc(0), Buffer.alloc(0)],
+    pid: 0,
+    signal: null,
+    status: 0,
+    stderr: Buffer.alloc(0),
+    stdout: Buffer.alloc(0),
+  };
+});
+
+for (const name of ['execSync', 'execFileSync']) {
+  replaceRuntimeProperty(childProcess, name, function () {
+    recordRuntimeViolation(`child_process.${name}`, 'process');
+    return Buffer.alloc(0);
+  });
+}
+
+class DeniedWorker extends EventEmitter {
+  constructor() {
+    super();
+    recordRuntimeViolation('worker_threads.Worker', 'worker');
+    this.performance = Object.freeze({});
+    this.resourceLimits = Object.freeze({});
+    this.stderr = null;
+    this.stdin = null;
+    this.stdout = null;
+    this.threadId = -1;
+  }
+
+  getHeapSnapshot() {
+    return Promise.resolve();
+  }
+
+  postMessage() {}
+
+  ref() {
+    return this;
+  }
+
+  terminate() {
+    return Promise.resolve(0);
+  }
+
+  unref() {
+    return this;
+  }
+}
+
+replaceRuntimeProperty(workerThreads, 'Worker', DeniedWorker);
+
+global.setInterval = function () {
+  recordRuntimeViolation('setInterval', 'scheduler');
+  return deniedTimerHandle();
 };
 global.setTimeout = function () {
-  violations.push({ operation: 'setTimeout', path: 'scheduler' });
-  return {
-    hasRef: () => false,
-    ref() {
-      return this;
-    },
-    refresh() {
-      return this;
-    },
-    unref() {
-      return this;
-    },
-  };
+  recordRuntimeViolation('setTimeout', 'scheduler');
+  return deniedTimerHandle();
 };
+global.setImmediate = function () {
+  recordRuntimeViolation('setImmediate', 'scheduler');
+  return deniedTimerHandle();
+};
+
+for (const name of ['setInterval', 'setTimeout', 'setImmediate']) {
+  replaceRuntimeProperty(timers, name, function () {
+    recordRuntimeViolation(`timers.${name}`, 'scheduler');
+    return deniedTimerHandle();
+  });
+}
+
+replaceRuntimeProperty(timerPromises, 'setTimeout', function (_delay, value) {
+  recordRuntimeViolation('timers/promises.setTimeout', 'scheduler');
+  return Promise.resolve(value);
+});
+replaceRuntimeProperty(timerPromises, 'setImmediate', function (value) {
+  recordRuntimeViolation('timers/promises.setImmediate', 'scheduler');
+  return Promise.resolve(value);
+});
+replaceRuntimeProperty(timerPromises, 'setInterval', function () {
+  recordRuntimeViolation('timers/promises.setInterval', 'scheduler');
+  return deniedAsyncIterator();
+});
+for (const name of ['wait', 'yield']) {
+  replaceRuntimeProperty(timerPromises.scheduler, name, function () {
+    recordRuntimeViolation(`timers/promises.scheduler.${name}`, 'scheduler');
+    return Promise.resolve();
+  });
+}
+
 net.Server.prototype.listen = function () {
-  violations.push({ operation: 'listen', path: 'listener' });
+  recordRuntimeViolation('listen', 'listener');
   return this;
 };
 syncBuiltinESMExports();
@@ -460,6 +615,15 @@ function restoreEnvironment() {
 function restoreFilesystem() {
   for (const [name, implementation] of original.fs) fs[name] = implementation;
   for (const [name, implementation] of original.fsPromises) fsPromises[name] = implementation;
+  for (const restoration of runtimePropertyRestorations.reverse()) {
+    if (restoration.descriptor) {
+      Object.defineProperty(restoration.target, restoration.name, restoration.descriptor);
+    } else {
+      delete restoration.target[restoration.name];
+    }
+  }
+  runtimePropertyRestorations.length = 0;
+  global.setImmediate = original.setImmediate;
   global.setInterval = original.setInterval;
   global.setTimeout = original.setTimeout;
   net.Server.prototype.listen = original.listen;
@@ -484,74 +648,83 @@ function handleType(handle) {
 
 async function settleEventLoop() {
   for (let turn = 0; turn < 4; turn += 1) {
-    await new Promise(resolve => setImmediate(resolve));
+    await new Promise(resolve => original.setImmediate(resolve));
   }
 }
 
-async function main() {
-  await settleEventLoop();
-  const mutableConfigChanges = [];
-  for (const target of mutableExportTargets) {
-    const key = `${path.resolve(target.modulePath)}\0${target.exportName}`;
-    const imported = require(target.modulePath);
-    if (configFingerprints.get(key) !== fingerprint(imported[target.exportName])) {
-      mutableConfigChanges.push({
-        module: safeModuleLabel(target.modulePath),
-        exportName: safeName(target.exportName, 'unsafe-export'),
-      });
-    }
-  }
-
-  const activeHandlesAfter = process._getActiveHandles();
-  const newBackendHandles = activeHandlesAfter
-    .filter(handle => activeHandleBaseline.has(handle) === false)
-    .map(handleType)
-    .sort();
-  const activeResourcesAfter = process.getActiveResourcesInfo();
-  const newBackendResources = subtractResourceTypes(activeResourcesBefore, activeResourcesAfter);
-  const pathsAfter = snapshotPaths([sourceRoot, runtimeRoot]);
-  const pathsChanged = JSON.stringify(pathsBefore) !== JSON.stringify(pathsAfter);
-  const report = {
-    imported: modules.length,
-    importError,
-    violations,
-    environmentMutations,
-    mutableConfigChanges,
-    newBackendHandles,
-    newBackendResources,
-    pathsChanged,
-  };
-  const status =
-    importError ||
-    violations.length ||
-    environmentMutations.length ||
-    mutableConfigChanges.length ||
-    newBackendHandles.length ||
-    newBackendResources.length ||
-    pathsChanged
-      ? 1
-      : 0;
-
+function cleanupProbe(activeHandles = []) {
   restoreEnvironment();
   restoreFilesystem();
-  for (const handle of activeHandlesAfter) {
+  for (const handle of activeHandles) {
     if (activeHandleBaseline.has(handle)) continue;
     try {
       handle.close?.();
       handle.destroy?.();
+      handle.terminate?.();
     } catch {
       // The isolated child is terminated after reporting.
     }
   }
   fs.rmSync(runtimeRoot, { recursive: true, force: true });
+}
+
+async function main() {
+  let activeHandlesAfter = [];
+  let report;
+  let status;
+  try {
+    await settleEventLoop();
+    const mutableConfigChanges = [];
+    for (const target of mutableExportTargets) {
+      const key = `${path.resolve(target.modulePath)}\0${target.exportName}`;
+      const imported = require(target.modulePath);
+      if (configFingerprints.get(key) !== fingerprint(imported[target.exportName])) {
+        mutableConfigChanges.push({
+          module: safeModuleLabel(target.modulePath),
+          exportName: safeName(target.exportName, 'unsafe-export'),
+        });
+      }
+    }
+
+    activeHandlesAfter = process._getActiveHandles();
+    const newBackendHandles = activeHandlesAfter
+      .filter(handle => activeHandleBaseline.has(handle) === false)
+      .map(handleType)
+      .sort();
+    const activeResourcesAfter = process.getActiveResourcesInfo();
+    const newBackendResources = subtractResourceTypes(activeResourcesBefore, activeResourcesAfter);
+    const pathsAfter = snapshotPaths([sourceRoot, runtimeRoot]);
+    const pathsChanged = JSON.stringify(pathsBefore) !== JSON.stringify(pathsAfter);
+    report = {
+      imported: modules.length,
+      importError,
+      violations,
+      environmentMutations,
+      mutableConfigChanges,
+      newBackendHandles,
+      newBackendResources,
+      pathsChanged,
+    };
+    status =
+      importError ||
+      violations.length ||
+      environmentMutations.length ||
+      mutableConfigChanges.length ||
+      newBackendHandles.length ||
+      newBackendResources.length ||
+      pathsChanged
+        ? 1
+        : 0;
+  } finally {
+    cleanupProbe(activeHandlesAfter);
+  }
+
   void stdioHandles;
   process.stdout.write(`\nIMPORT_SAFETY_REPORT:${JSON.stringify(report)}\n`, () => process.exit(status));
 }
 
 main().catch(error => {
-  restoreEnvironment();
-  restoreFilesystem();
-  fs.rmSync(runtimeRoot, { recursive: true, force: true });
+  cleanupProbe();
   const report = {
     imported: modules.length,
     importError: { name: safeName(error?.name, 'Error') },
