@@ -18,10 +18,10 @@ release evidence must not contain personal absolute paths.
 
 | Repository command                                                                                                                                                 | Exit | Result                                                               |
 | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---: | -------------------------------------------------------------------- |
-| `npm --workspace backend test`                                                                                                                                     |    0 | Node test runner `81/81`; inherited API/mail coverage `57/57`        |
+| `npm --workspace backend test`                                                                                                                                     |    0 | Node test runner `84/84`; inherited API/mail coverage `57/57`        |
 | `node --test scripts/testing/run-legacy-backend-tests.test.mjs`                                                                                                    |    0 | Safe disposable-copy runner contract `9/9`                           |
 | `node scripts/testing/run-legacy-backend-tests.mjs`                                                                                                                |    0 | Disposable backend copy; isolated runtime; inherited tests `57/57`   |
-| `node --test backend/test/import-safety.test.js backend/test/import-safety-probe.test.js backend/test/runtime-state.test.js backend/test/server-lifecycle.test.js` |    0 | Probe/import, runtime reset, and lifecycle cleanup `17/17`           |
+| `node --test backend/test/import-safety.test.js backend/test/import-safety-probe.test.js backend/test/runtime-state.test.js backend/test/server-lifecycle.test.js` |    0 | Probe/import, runtime reset, and lifecycle cleanup `20/20`           |
 | `npm ci`                                                                                                                                                           |    0 | Lockfile-clean install: `525` packages added; `528` audited          |
 | `npm ls jest --all`                                                                                                                                                |    1 | Expected empty dependency tree; no installed Jest package            |
 | `npm audit --omit=dev`                                                                                                                                             |    0 | Production dependencies: `0` vulnerabilities                         |
@@ -46,16 +46,18 @@ without raw paths, environment values, credentials, file contents, or hashes:
 | Isolated support-helper contract |    1 | Required test-environment and ephemeral-server helper modules/exports did not exist                             |
 | Strengthened probe fixture suite |    1 | Environment/config, callback, promise, stream, and non-timeout resource fixtures escaped detection              |
 | Process/timer/worker isolation   |    1 | Subprocess entry points, timer-module schedulers, promise schedulers, and Worker construction escaped detection |
+| Direct constructor isolation     |    1 | CommonJS/ESM direct `ChildProcess` launches returned clean while fixture-owned external targets changed         |
 | Sequential runtime environments  |    1 | A missing settings file inherited the previous model, review interval, and initialized AI client                |
 | Failed listen and close cleanup  |    1 | An occupied port left app timers/database open; close rejection skipped app/database cleanup                    |
+| Partial startup allocation       |    1 | Second rate-limit and scheduler allocations each left one created timer uncleared                               |
 
-After implementation, the focused Node test command passes `17/17`: eleven
+After implementation, the focused Node test command passes `20/20`: twelve
 probe regression fixtures, one production-module import check, two sequential
-runtime-state checks, and three listener/runtime-close lifecycle checks. The
-probe compares exact baseline handle identities and the complete resource-type
-multiset after event-loop settling; it uses no resource-type allowlist. Denied
-subprocess reports retain only fixed operation labels, never commands,
-arguments, paths, or environment values.
+runtime-state checks, and five startup/listener/runtime-close lifecycle checks.
+The probe compares exact baseline handle identities and the complete
+resource-type multiset after event-loop settling; it uses no resource-type
+allowlist. Denied subprocess reports retain only fixed operation labels, never
+commands, arguments, options, paths, or environment values.
 
 ## Historical Jest baseline
 

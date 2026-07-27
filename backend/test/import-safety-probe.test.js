@@ -204,6 +204,7 @@ test('probe denies every child-process entry point without exposing commands or 
         () => childProcess.exec(null),
         () => childProcess.execFile(null),
         () => childProcess.fork(null),
+        () => childProcess._forkChild(null),
       ]) {
         try { invoke(); } catch {}
       }
@@ -218,6 +219,7 @@ test('probe denies every child-process entry point without exposing commands or 
 
     assert.equal(result.status, 1);
     assert.deepEqual(result.report.violations.map(({ operation }) => operation).sort(), [
+      'child_process._forkChild',
       'child_process.exec',
       'child_process.execFile',
       'child_process.execFileSync',
@@ -228,6 +230,87 @@ test('probe denies every child-process entry point without exposing commands or 
     ]);
     assert.equal(readFileSync(externalTarget, 'utf8'), 'original');
     assert.equal(JSON.stringify(result.report).includes(externalTarget), false);
+  } finally {
+    removeFixture(root);
+  }
+});
+
+test('probe denies direct CommonJS and ESM ChildProcess launches without exposing their targets', () => {
+  const root = createFixture({
+    'external/cjs-sentinel.txt': 'original',
+    'external/esm-sentinel.txt': 'original',
+    'source/placeholder.txt': '',
+  });
+  const sourceRoot = join(root, 'source');
+  const cjsTarget = join(root, 'external', 'cjs-sentinel.txt');
+  const esmTarget = join(root, 'external', 'esm-sentinel.txt');
+
+  function directLaunchSource(importStatement, target, changedValue) {
+    const writeCode = `require('node:fs').writeFileSync(${JSON.stringify(target)}, ${JSON.stringify(changedValue)})`;
+    return `
+      ${importStatement}
+      const target = ${JSON.stringify(target)};
+      const child = new ChildProcess();
+      child.spawn({
+        stdio: 'ignore',
+        detached: true,
+        args: [process.execPath, '-e', ${JSON.stringify(writeCode)}],
+        cwd: undefined,
+        envPairs: Object.entries(process.env).map(entry => entry.join('=')),
+        file: process.execPath,
+        windowsHide: true,
+        windowsVerbatimArguments: false,
+      });
+      child.unref();
+      if (child.pid) {
+        const waitBuffer = new Int32Array(new SharedArrayBuffer(4));
+        const deadline = Date.now() + 5000;
+        while (readFileSync(target, 'utf8') === 'original' && Date.now() < deadline) {
+          Atomics.wait(waitBuffer, 0, 0, 10);
+        }
+      }
+    `;
+  }
+
+  writeFileSync(
+    join(sourceRoot, 'direct-child.cjs'),
+    directLaunchSource(
+      "const { ChildProcess } = require('node:child_process'); const { readFileSync } = require('node:fs');",
+      cjsTarget,
+      'changed-cjs'
+    )
+  );
+  writeFileSync(
+    join(sourceRoot, 'direct-child.mjs'),
+    directLaunchSource(
+      "import { ChildProcess } from 'node:child_process'; import { readFileSync } from 'node:fs';",
+      esmTarget,
+      'changed-esm'
+    )
+  );
+
+  try {
+    const result = runImportProbe({
+      modules: [join(sourceRoot, 'direct-child.cjs'), join(sourceRoot, 'direct-child.mjs')],
+      sourceRoot,
+    });
+
+    assert.deepEqual(
+      {
+        status: result.status,
+        operations: result.report.violations.map(({ operation }) => operation),
+        cjsSentinel: readFileSync(cjsTarget, 'utf8'),
+        esmSentinel: readFileSync(esmTarget, 'utf8'),
+      },
+      {
+        status: 1,
+        operations: ['child_process.ChildProcess.spawn', 'child_process.ChildProcess.spawn'],
+        cjsSentinel: 'original',
+        esmSentinel: 'original',
+      }
+    );
+    assert.equal(JSON.stringify(result.report).includes(cjsTarget), false);
+    assert.equal(JSON.stringify(result.report).includes(esmTarget), false);
   } finally {
     removeFixture(root);
   }

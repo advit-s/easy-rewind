@@ -57,6 +57,89 @@ async function closeServer(server) {
   });
 }
 
+test('createApp clears its first rate-limit interval when the second allocation fails', () => {
+  const allocationError = new Error('fixture second rate-limit allocation failure');
+  const originalSetInterval = global.setInterval;
+  const originalClearInterval = global.clearInterval;
+  const firstInterval = {
+    unref() {
+      return this;
+    },
+  };
+  let allocationAttempts = 0;
+  let createdIntervals = 0;
+  let clearedIntervals = 0;
+
+  global.setInterval = () => {
+    allocationAttempts += 1;
+    if (allocationAttempts === 2) throw allocationError;
+    createdIntervals += 1;
+    return firstInterval;
+  };
+  global.clearInterval = interval => {
+    if (interval === firstInterval) clearedIntervals += 1;
+  };
+
+  try {
+    assert.throws(
+      () => createApp({ requestLogging: false }),
+      error => error === allocationError
+    );
+    assert.equal(createdIntervals, 1);
+    assert.equal(clearedIntervals, 1);
+  } finally {
+    global.setInterval = originalSetInterval;
+    global.clearInterval = originalClearInterval;
+  }
+});
+
+test('scheduler startup clears its first interval when the second allocation fails', async () => {
+  const environment = await createTestEnvironment();
+  const previousEnvironment = captureEnvironment();
+  const allocationError = new Error('fixture second scheduler allocation failure');
+  const originalSetInterval = global.setInterval;
+  const originalClearInterval = global.clearInterval;
+  const firstInterval = {};
+  let allocationAttempts = 0;
+  let createdIntervals = 0;
+  let clearedIntervals = 0;
+  let app;
+
+  try {
+    applyEnvironment(environment);
+    app = createApp({ rateLimitsEnabled: false, requestLogging: false });
+    global.setInterval = () => {
+      allocationAttempts += 1;
+      if (allocationAttempts === 2) throw allocationError;
+      createdIntervals += 1;
+      return firstInterval;
+    };
+    global.clearInterval = interval => {
+      if (interval === firstInterval) clearedIntervals += 1;
+    };
+
+    await assert.rejects(
+      startServer({
+        app,
+        host: '127.0.0.1',
+        port: 0,
+        schedulersEnabled: true,
+      }),
+      error => error === allocationError
+    );
+    assert.equal(createdIntervals, 1);
+    assert.equal(clearedIntervals, 1);
+  } finally {
+    global.setInterval = originalSetInterval;
+    global.clearInterval = originalClearInterval;
+    app?.locals.close?.();
+    closeDb();
+    resetGenAI();
+    restoreEnvironment(previousEnvironment);
+    await environment.cleanup();
+  }
+});
+
 test('failed listen closes rate-limit intervals, app resources, and the database', async () => {
   const environment = await createTestEnvironment();
   const previousEnvironment = captureEnvironment();

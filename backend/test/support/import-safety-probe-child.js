@@ -200,12 +200,18 @@ function replace(target, originals, name, implementation) {
 
 function replaceRuntimeProperty(target, name, implementation) {
   if (typeof target[name] !== 'function') return;
+  const descriptor = Object.getOwnPropertyDescriptor(target, name);
   runtimePropertyRestorations.push({
     target,
     name,
-    descriptor: Object.getOwnPropertyDescriptor(target, name),
+    descriptor,
   });
-  target[name] = implementation;
+  Object.defineProperty(target, name, {
+    configurable: descriptor?.configurable ?? true,
+    enumerable: descriptor?.enumerable ?? true,
+    writable: descriptor?.writable ?? true,
+    value: implementation,
+  });
 }
 
 function callbackFrom(args) {
@@ -476,12 +482,21 @@ class DeniedChildProcess extends EventEmitter {
   }
 }
 
+replaceRuntimeProperty(childProcess.ChildProcess.prototype, 'spawn', function () {
+  recordRuntimeViolation('child_process.ChildProcess.spawn', 'process');
+});
+
 for (const name of ['spawn', 'exec', 'execFile', 'fork']) {
   replaceRuntimeProperty(childProcess, name, function () {
     recordRuntimeViolation(`child_process.${name}`, 'process');
     return new DeniedChildProcess();
   });
 }
+
+replaceRuntimeProperty(childProcess, '_forkChild', function () {
+  recordRuntimeViolation('child_process._forkChild', 'process');
+  return new DeniedChildProcess();
+});
 
 replaceRuntimeProperty(childProcess, 'spawnSync', function () {
   recordRuntimeViolation('child_process.spawnSync', 'process');

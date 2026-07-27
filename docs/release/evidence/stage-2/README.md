@@ -54,8 +54,8 @@ On 2026-07-25, the backend test runner was migrated from Jest to the built-in
 Node.js test runner. The `57` inherited behavior tests (`56` API tests and one
 Nodemailer compatibility test) pass with a unique repository-external
 database and settings path for every API test. On 2026-07-27, the import probe
-was strengthened with eleven regression fixtures. The complete backend
-command passes `81/81`, including import-safety, database-path,
+was strengthened with twelve regression fixtures. The complete backend
+command passes `84/84`, including import-safety, database-path,
 temporary-environment, and loopback ephemeral-server coverage.
 
 Importing `server.js` and all eight production route modules now creates no
@@ -66,8 +66,10 @@ filesystem APIs, then settles the event loop and compares exact baseline
 handle identities and all resource types without an allowlist. Reports retain
 only sanitized operation, key, module, export, and path-category labels.
 Subprocess creation, Worker construction, global and module timer functions,
-promise timers, and promise scheduler methods are denied before import;
-subprocess commands, arguments, paths, and environments are never reported.
+promise timers, and promise scheduler methods are denied before import; the
+subprocess coverage includes exported helpers, `_forkChild`, and direct
+CommonJS/ESM `ChildProcess.prototype.spawn` calls. Subprocess commands,
+arguments, options, paths, and environments are never reported.
 Server startup, schedulers, settings loading, and database opening remain
 explicit actions. The previous Jest `TCPSERVERWRAP` and `Timeout` diagnostic
 is therefore resolved for this test scope; this does not claim that the
@@ -77,9 +79,11 @@ Runtime reset now closes the current database, restores every configuration
 field from immutable defaults, clears the cached AI client, and loads only the
 selected settings environment. Isolated API tests reset before use and after
 cleanup, including an explicitly blank AI credential. Failed listener startup
-closes app-local rate-limit timers and the database. Runtime close is
-idempotent and still closes app/database resources if server close reports an
-error.
+closes app-local rate-limit timers and the database. App composition and
+scheduler startup also transfer timer cleanup ownership incrementally, so a
+second allocation failure clears the first created timer before rethrow.
+Runtime close is idempotent and still closes app/database resources if server
+close reports an error.
 
 The recorded RED evidence is sanitized: production imports originally created
 a listener and scheduler resources, attempted settings output, and read
@@ -89,8 +93,12 @@ first demonstrated that environment/config mutation, asynchronous filesystem
 writes, streams, a non-timeout resource, subprocess/Worker creation, and timer
 module scheduling escaped the old probe. Separate RED checks reproduced
 settings/AI state crossing sequential environments and resource retention
-after failed listen/close operations. No raw environment values, subprocess
-commands or arguments, personal paths, contents, or hashes are retained.
+after failed listen/close operations. Additional RED checks showed that direct
+CommonJS/ESM `ChildProcess` construction returned a clean probe result while
+fixture-owned external sentinels changed, and that second rate-limit and
+scheduler allocation failures each left one created timer uncleared. No raw
+environment values, subprocess commands, arguments, options, personal paths,
+contents, or hashes are retained.
 
 A pinned Node `24.18.0` lockfile-clean install added `525` packages and audited
 `528`. The installed dependency tree is empty for Jest, its package directory

@@ -17,6 +17,18 @@ function createApp(options = {}) {
   const rateLimitsEnabled = options.rateLimitsEnabled !== false;
   const requestLogging = options.requestLogging !== false;
 
+  function shutdownRateLimitStores() {
+    let shutdownError;
+    for (const store of rateLimitStores.splice(0)) {
+      try {
+        store.shutdown();
+      } catch (error) {
+        shutdownError ||= error;
+      }
+    }
+    if (shutdownError) throw shutdownError;
+  }
+
   const corsOptions = {
     origin(origin, callback) {
       if (!origin) return callback(null, true);
@@ -35,98 +47,108 @@ function createApp(options = {}) {
     allowedHeaders: ['Content-Type', 'Authorization', 'x-user-id'],
     credentials: true,
   };
-  app.use(cors(corsOptions));
 
-  if (rateLimitsEnabled) {
-    const generalStore = new rateLimit.MemoryStore();
-    const aiStore = new rateLimit.MemoryStore();
-    rateLimitStores.push(generalStore, aiStore);
-    app.use(
-      rateLimit({
-        windowMs: 15 * 60 * 1000,
-        limit: 200,
-        standardHeaders: true,
-        legacyHeaders: false,
-        message: { error: 'Too many requests. Please wait a few minutes and try again.' },
-        store: generalStore,
-      })
-    );
-    app.use(
-      '/api/quick-lookup',
-      rateLimit({
-        windowMs: 60 * 1000,
-        limit: 10,
-        message: { error: 'Too many AI lookups. Please wait a moment.' },
-        store: aiStore,
-      })
-    );
-  }
+  try {
+    app.use(cors(corsOptions));
 
-  app.use((request, response, next) => {
-    response.setHeader('X-Content-Type-Options', 'nosniff');
-    response.setHeader('X-Frame-Options', 'DENY');
-    response.setHeader('X-XSS-Protection', '1; mode=block');
-    response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-    response.setHeader(
-      'Content-Security-Policy',
-      "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' http://localhost:*"
-    );
-    next();
-  });
+    if (rateLimitsEnabled) {
+      const generalStore = new rateLimit.MemoryStore();
+      rateLimitStores.push(generalStore);
+      const aiStore = new rateLimit.MemoryStore();
+      rateLimitStores.push(aiStore);
+      app.use(
+        rateLimit({
+          windowMs: 15 * 60 * 1000,
+          limit: 200,
+          standardHeaders: true,
+          legacyHeaders: false,
+          message: { error: 'Too many requests. Please wait a few minutes and try again.' },
+          store: generalStore,
+        })
+      );
+      app.use(
+        '/api/quick-lookup',
+        rateLimit({
+          windowMs: 60 * 1000,
+          limit: 10,
+          message: { error: 'Too many AI lookups. Please wait a moment.' },
+          store: aiStore,
+        })
+      );
+    }
 
-  app.use(express.json({ limit: '100kb' }));
-  app.use(express.urlencoded({ extended: true }));
-
-  if (requestLogging) {
     app.use((request, response, next) => {
-      const start = Date.now();
-      const timestamp = new Date().toISOString();
-      response.on('finish', () => {
-        const duration = Date.now() - start;
-        const marker = response.statusCode >= 500 ? 'ERROR' : response.statusCode >= 400 ? 'WARN' : 'OK';
-        console.log(
-          `[${marker}] [${timestamp}] ${request.method} ${request.originalUrl} -> ${response.statusCode} (${duration}ms)`
-        );
-      });
+      response.setHeader('X-Content-Type-Options', 'nosniff');
+      response.setHeader('X-Frame-Options', 'DENY');
+      response.setHeader('X-XSS-Protection', '1; mode=block');
+      response.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+      response.setHeader(
+        'Content-Security-Policy',
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; img-src 'self' data: https:; connect-src 'self' http://localhost:*"
+      );
       next();
     });
-  }
 
-  app.use(express.static(path.join(__dirname, '..', 'frontend')));
-  app.get('/dashboard', (_request, response) => {
-    response.sendFile(path.join(__dirname, '..', 'frontend', 'dashboard.html'));
-  });
-  app.get('/', (_request, response) => {
-    response.redirect('/dashboard');
-  });
+    app.use(express.json({ limit: '100kb' }));
+    app.use(express.urlencoded({ extended: true }));
 
-  app.use('/api', apiRoutes);
-  app.use((error, _request, response, _next) => {
-    console.error('[Server Error]', error.message);
-    if (error.message && error.message.startsWith('CORS policy')) {
-      return response.status(403).json({ error: 'Request blocked by CORS policy.' });
+    if (requestLogging) {
+      app.use((request, response, next) => {
+        const start = Date.now();
+        const timestamp = new Date().toISOString();
+        response.on('finish', () => {
+          const duration = Date.now() - start;
+          const marker = response.statusCode >= 500 ? 'ERROR' : response.statusCode >= 400 ? 'WARN' : 'OK';
+          console.log(
+            `[${marker}] [${timestamp}] ${request.method} ${request.originalUrl} -> ${response.statusCode} (${duration}ms)`
+          );
+        });
+        next();
+      });
     }
-    response.status(500).json({
-      error: 'Internal server error. Please try again.',
-      ...(process.env.NODE_ENV === 'development' && { details: error.message }),
-    });
-  });
-  app.use((request, response) => {
-    response.status(404).json({ error: `Route ${request.method} ${request.path} not found.` });
-  });
 
-  let appClosed = false;
-  app.locals.close = () => {
-    if (appClosed) return;
-    appClosed = true;
-    for (const store of rateLimitStores) store.shutdown();
-  };
-  return app;
+    app.use(express.static(path.join(__dirname, '..', 'frontend')));
+    app.get('/dashboard', (_request, response) => {
+      response.sendFile(path.join(__dirname, '..', 'frontend', 'dashboard.html'));
+    });
+    app.get('/', (_request, response) => {
+      response.redirect('/dashboard');
+    });
+
+    app.use('/api', apiRoutes);
+    app.use((error, _request, response, _next) => {
+      console.error('[Server Error]', error.message);
+      if (error.message && error.message.startsWith('CORS policy')) {
+        return response.status(403).json({ error: 'Request blocked by CORS policy.' });
+      }
+      response.status(500).json({
+        error: 'Internal server error. Please try again.',
+        ...(process.env.NODE_ENV === 'development' && { details: error.message }),
+      });
+    });
+    app.use((request, response) => {
+      response.status(404).json({ error: `Route ${request.method} ${request.path} not found.` });
+    });
+
+    let appClosed = false;
+    app.locals.close = () => {
+      if (appClosed) return;
+      appClosed = true;
+      shutdownRateLimitStores();
+    };
+    return app;
+  } catch (error) {
+    try {
+      shutdownRateLimitStores();
+    } catch {
+      // Preserve the composition error after best-effort cleanup.
+    }
+    throw error;
+  }
 }
 
-function startSchedulers(origin) {
+function startSchedulers(origin, intervals) {
   const axios = require('axios');
-  const intervals = [];
 
   intervals.push(
     setInterval(
@@ -244,7 +266,7 @@ async function startServer(options = {}) {
   const { closeDb, resetRuntimeState } = require('./routes/helpers');
   let app;
   let server;
-  let intervals = [];
+  const intervals = [];
 
   try {
     resetRuntimeState();
@@ -256,7 +278,7 @@ async function startServer(options = {}) {
     const actualPort = typeof address === 'object' ? address.port : port;
     const origin = `http://127.0.0.1:${actualPort}`;
     const schedulersEnabled = options.schedulersEnabled ?? process.env.EASY_REWIND_SCHEDULERS_ENABLED !== 'false';
-    intervals = schedulersEnabled ? startSchedulers(origin) : [];
+    if (schedulersEnabled) startSchedulers(origin, intervals);
     let closePromise;
 
     console.log(`[Server] API listening at ${origin}/api`);
