@@ -29,6 +29,7 @@
     "test:requirements": "node --test scripts/validation/stage2-requirements.test.mjs",
     "test:backend": "npm --workspace backend test",
     "test:migrations": "npm --workspace backend run test:migrations",
+    "test:lifecycle": "node --test backend/src/lifecycle/*.test.js backend/test/import-safety.test.js",
     "test:backend:legacy-safe": "node scripts/testing/run-legacy-backend-tests.mjs",
     "test:contracts": "npm --workspace @easy-rewind/contracts test",
     "validate:extension": "node scripts/validation/validate-extension.mjs",

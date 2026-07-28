@@ -352,6 +352,23 @@ complete backend suite passed `286/286`, all with zero skips. Pairing service
 responses also pass the frozen Task 5 challenge and credential validators.
 Task 6 did not start a listener, access legacy data, or run an external audit.
 
+## Task 7 shared backend lifecycle
+
+The Electron-independent shared runtime now supports injected production,
+standalone, and test composition. It owns canonical database migration,
+listener creation, scheduler and LAN-gateway controllers, bounded request
+draining, reverse-order startup rollback, idempotent concurrent shutdown, and
+restart after a completed stop. Test mode runs the identical modules with its
+listener and scheduler disabled.
+
+The new `/v1/health` route produces the frozen safe response and covers ready,
+disabled, degraded, and unavailable component states plus schema version and
+legacy-migration availability. Focused lifecycle and import-safety coverage
+passed `10/10`; new and compatibility lifecycle tests passed `14/14`; and the
+complete backend suite passed `295/295`, all with zero skips. The root
+standalone entry point is thin and signal-aware; its legacy route adapter
+remains lazy and isolated until Task 11 replaces compatibility routes.
+
 The final pinned-runtime root verification passed with workspace `41/41`,
 containment `21/21`, hygiene `63/63`, backend `278/278`, safe legacy runner
 `57/57`, requirements `18/18`, and contracts `23/23`. Every suite reported

@@ -21,7 +21,7 @@ if not exist "node_modules" (
     )
 )
 
-echo [Server] Starting Node.js server on port 5000...
+echo [Server] Starting the Easy Rewind standalone backend...
 echo [Server] Press Ctrl+C to stop.
 echo.
 
@@ -30,6 +30,6 @@ node server.js
 if errorlevel 1 (
     echo.
     echo [ERROR] Server exited with code %errorlevel%
-    echo Make sure port 5000 is not in use by another process.
+    echo Check the sanitized backend startup output above.
     pause
 )

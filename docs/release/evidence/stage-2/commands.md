@@ -198,7 +198,7 @@ does not claim a passing result.
 | Scope                         | Command                                            | Baseline state                                          |
 | ----------------------------- | -------------------------------------------------- | ------------------------------------------------------- |
 | Requirements ledger           | `npm run test:requirements`                        | `18/18` passed                                          |
-| Lifecycle and execution modes | `npm run test:lifecycle`                           | pending                                                 |
+| Lifecycle and execution modes | `npm run test:lifecycle`                           | `10/10` passed; zero skips                              |
 | Canonical schema/migrations   | `npm run test:migrations`                          | `88/88` passed; zero skips                              |
 | Frozen API contracts          | `npm run test:contracts`                           | `23/23` passed; zero skips                              |
 | Authentication                | `node --test backend/src/auth/auth.test.js`        | `7/7` passed; zero skips                                |
@@ -236,6 +236,35 @@ both device and credential state. Service responses pass the frozen pairing
 contract validators. Request middleware derives immutable profile ownership
 from authenticated context and rejects body, query, path, or legacy header
 owner overrides.
+
+## Task 7 shared-lifecycle commands
+
+All commands used the pinned Node `24.18.0` runtime. The lifecycle and HTTP
+modules remain Electron-independent and import-inert.
+
+| Repository command                                                                            | Exit | Result                                                                                                                         |
+| --------------------------------------------------------------------------------------------- | ---: | ------------------------------------------------------------------------------------------------------------------------------ |
+| `node --test backend/src/lifecycle/create-runtime.test.js` before implementation              |    1 | Expected RED: all seven initial cases failed because runtime, application, listener, health, and scheduler modules were absent |
+| `node --test backend/src/lifecycle/create-runtime.test.js backend/test/import-safety.test.js` |    0 | GREEN: lifecycle, contract-valid health, scheduler, standalone signals, and inert imports passed `10/10`; zero skips           |
+| Lifecycle tests plus `backend/test/server-lifecycle.test.js`                                  |    0 | GREEN: new shared lifecycle and retained compatibility-lifecycle coverage passed `14/14`; zero skips                           |
+| `npm --workspace backend run lint`                                                            |    0 | GREEN: backend ESLint completed with zero warnings                                                                             |
+| `npm --workspace backend test`                                                                |    0 | GREEN: complete backend suite passed `295/295`; zero skips                                                                     |
+
+`createRuntime(config, adapters)` now owns database opening and migration,
+application composition, optional loopback listening, scheduler startup, and
+optional LAN-gateway startup. Test mode uses the same runtime with listeners
+and schedulers disabled. Stop first rejects new requests, drains bounded
+in-flight work, then stops schedulers and LAN work before closing the HTTP
+listener, application resources, and database. Concurrent stops share one
+promise; completed runtimes can start again; failed starts roll back created
+resources in reverse order while preserving the startup error.
+
+The `/v1/health` implementation matches the frozen contract and reports only
+version, schema/API versions, execution mode, component readiness, and the
+legacy-migration-available flag. Component error text, storage paths, host
+details, keys, and row data are discarded. The standalone signal owner uses
+the shared lifecycle, while the thin root entry point keeps a lazy legacy
+route adapter until Task 11 replaces those routes.
 
 ## Known native-rebuild diagnostic
 
