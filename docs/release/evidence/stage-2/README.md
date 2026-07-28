@@ -335,6 +335,23 @@ client change, legacy data access, or raw database hash is part of the
 contract package. No external audit was requested or run for Task 5; the last
 verified Task 2 audit counts remain unchanged.
 
+## Task 6 local authentication
+
+The Electron-independent backend now implements loopback installation
+credentials, protected browser sessions, immutable authenticated request
+context, and confirmed Android device pairing. SQLite contains only versioned
+keyed digests; the recoverable installation token crosses the injected
+protected secret-store boundary, while device credentials are returned once
+and are not treated as recoverable local secrets.
+
+The canonical unreleased authentication migration now includes exact
+loopback-origin and CSRF binding, profile/device credential ownership, and
+one-use pairing-challenge state. Focused authentication tests passed `7/7`,
+the combined exact-schema and authentication run passed `45/45`, and the
+complete backend suite passed `286/286`, all with zero skips. Pairing service
+responses also pass the frozen Task 5 challenge and credential validators.
+Task 6 did not start a listener, access legacy data, or run an external audit.
+
 The final pinned-runtime root verification passed with workspace `41/41`,
 containment `21/21`, hygiene `63/63`, backend `278/278`, safe legacy runner
 `57/57`, requirements `18/18`, and contracts `23/23`. Every suite reported

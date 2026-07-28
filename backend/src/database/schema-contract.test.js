@@ -31,6 +31,7 @@ const requiredTables = [
   'jobs',
   'migration_runs',
   'notes',
+  'pairing_challenges',
   'profiles',
   'quiz_results',
   'reminder_deliveries',
@@ -352,9 +353,9 @@ test('owned relationships reject parent rows belonging to another valid profile'
   ).run('reminder-1', 'profile-1', 'item-1a');
   db.prepare(
     `INSERT INTO client_credentials(
-       id, profile_id, kind, secret_ref, state, created_at, updated_at
-     ) VALUES (?, ?, 'browser_extension', ?, 'active', 1, 1)`
-  ).run('credential-1', 'profile-1', 'secret:first');
+       id, profile_id, kind, secret_ref, secret_digest, state, created_at, updated_at
+     ) VALUES (?, ?, 'browser_extension', ?, ?, 'active', 1, 1)`
+  ).run('credential-1', 'profile-1', 'secret:first', `v1:${'1'.repeat(64)}`);
   const insertDevice = db.prepare(
     `INSERT INTO sync_devices(
        id, profile_id, name, platform, state, created_at, updated_at, revision
@@ -440,8 +441,13 @@ test('owned relationships reject parent rows belonging to another valid profile'
     [
       'browser_sessions.credential_id',
       `INSERT INTO browser_sessions(
-         id, profile_id, credential_id, token_hash, state, expires_at, created_at, updated_at
-       ) VALUES ('cross-session', 'profile-2', 'credential-1', 'token-hash', 'active', 10, 1, 1)`,
+         id, profile_id, credential_id, origin, token_hash, csrf_hash, state, expires_at, created_at, updated_at
+       ) VALUES (
+         'cross-session', 'profile-2', 'credential-1', 'http://127.0.0.1:3210',
+         'v1:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+         'v1:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+         'active', 10, 1, 1
+       )`,
     ],
     [
       'sync_operations.device_id',
@@ -623,6 +629,28 @@ test('stable state checks accept documented states and reject unknown values', a
   });
 
   db.close();
+});
+
+test('credential digest checks require an exact versioned lowercase SHA-256 value', async () => {
+  const db = await migratedDatabase();
+  db.prepare('INSERT INTO profiles(id, display_name, created_at, updated_at, revision) VALUES (?, ?, ?, ?, ?)').run(
+    'profile-digest',
+    'Digest owner',
+    1,
+    1,
+    1
+  );
+  try {
+    assertConstraint(
+      db,
+      `INSERT INTO client_credentials(
+         id, profile_id, kind, secret_digest, state, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, 'active', 1, 1)`,
+      ['credential-invalid-digest', 'profile-digest', 'application_api', `v1:a${'Z'.repeat(63)}`]
+    );
+  } finally {
+    db.close();
+  }
 });
 
 test('revision and timestamp checks reject invalid syncable records', async () => {

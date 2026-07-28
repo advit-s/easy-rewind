@@ -18,7 +18,9 @@ const expectedColumns = Object.freeze({
     'id',
     'profile_id',
     'credential_id',
+    'origin',
     'token_hash',
+    'csrf_hash',
     'state',
     'expires_at',
     'last_seen_at',
@@ -30,8 +32,10 @@ const expectedColumns = Object.freeze({
     'id',
     'profile_id',
     'kind',
+    'device_id',
     'label',
     'secret_ref',
+    'secret_digest',
     'state',
     'last_used_at',
     'revoked_at',
@@ -138,6 +142,18 @@ const expectedColumns = Object.freeze({
     'created_at',
   ],
   notes: ['id', 'profile_id', 'item_id', 'body', 'created_at', 'updated_at', 'revision', 'deleted_at'],
+  pairing_challenges: [
+    'id',
+    'profile_id',
+    'device_id',
+    'challenge_digest',
+    'state',
+    'expires_at',
+    'confirmed_at',
+    'consumed_at',
+    'created_at',
+    'updated_at',
+  ],
   profiles: ['id', 'display_name', 'timezone', 'locale', 'created_at', 'updated_at', 'revision', 'deleted_at'],
   quiz_results: [
     'id',
@@ -266,11 +282,13 @@ const expectedIndexes = Object.freeze({
     namedIndex('idx_browser_sessions_profile_state', false, false, 'profile_id', 'state', 'expires_at', 'id'),
     automaticIndex('sqlite_autoindex_browser_sessions_1', 'pk', 'id'),
     automaticIndex('sqlite_autoindex_browser_sessions_2', 'u', 'token_hash'),
+    automaticIndex('sqlite_autoindex_browser_sessions_3', 'u', 'csrf_hash'),
   ],
   client_credentials: [
     namedIndex('idx_client_credentials_profile_state', false, false, 'profile_id', 'state', 'kind', 'id'),
     automaticIndex('sqlite_autoindex_client_credentials_1', 'pk', 'id'),
     automaticIndex('sqlite_autoindex_client_credentials_2', 'u', 'secret_ref'),
+    automaticIndex('sqlite_autoindex_client_credentials_3', 'u', 'secret_digest'),
     namedIndex('uq_client_credentials_profile_id', true, false, 'profile_id', 'id'),
   ],
   connections: [
@@ -348,6 +366,11 @@ const expectedIndexes = Object.freeze({
   notes: [
     namedIndex('idx_notes_profile_item', false, false, 'profile_id', 'item_id', 'deleted_at', 'updated_at', 'id'),
     automaticIndex('sqlite_autoindex_notes_1', 'pk', 'id'),
+  ],
+  pairing_challenges: [
+    namedIndex('idx_pairing_challenges_profile_state', false, false, 'profile_id', 'state', 'expires_at', 'id'),
+    automaticIndex('sqlite_autoindex_pairing_challenges_1', 'pk', 'id'),
+    automaticIndex('sqlite_autoindex_pairing_challenges_2', 'u', 'challenge_digest'),
   ],
   profiles: [automaticIndex('sqlite_autoindex_profiles_1', 'pk', 'id')],
   quiz_results: [
@@ -453,7 +476,11 @@ const expectedForeignKeys = Object.freeze({
     foreignKey('profile_id', 'client_credentials', 'CASCADE', 'profile_id'),
     profileCascade,
   ],
-  client_credentials: [profileCascade],
+  client_credentials: [
+    foreignKey('device_id', 'sync_devices', 'CASCADE'),
+    foreignKey('profile_id', 'sync_devices', 'CASCADE', 'profile_id'),
+    profileCascade,
+  ],
   connections: [
     foreignKey('profile_id', 'items', 'CASCADE', 'profile_id'),
     foreignKey('profile_id', 'items', 'CASCADE', 'profile_id'),
@@ -486,6 +513,11 @@ const expectedForeignKeys = Object.freeze({
   notes: [
     foreignKey('item_id', 'items', 'CASCADE'),
     foreignKey('profile_id', 'items', 'CASCADE', 'profile_id'),
+    profileCascade,
+  ],
+  pairing_challenges: [
+    foreignKey('device_id', 'sync_devices', 'CASCADE'),
+    foreignKey('profile_id', 'sync_devices', 'CASCADE', 'profile_id'),
     profileCascade,
   ],
   profiles: [],

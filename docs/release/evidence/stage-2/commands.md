@@ -137,7 +137,7 @@ relationships, including nullable sync references whose parent deletion still
 clears only the optional reference. Transaction-control and attachment
 statements are rejected before any migration SQL executes, while comments,
 strings, quoted identifiers, and trigger bodies remain valid.
-The exact contract freezes ordered columns for all `26` relational tables,
+The exact contract freezes ordered columns for all `27` relational tables,
 every named and SQLite-generated automatic index with ordered columns and
 uniqueness, every `index_xinfo` key/collation/direction term, normalized index
 creation SQL and partial predicate, every foreign-key action, and the migration
@@ -201,11 +201,41 @@ does not claim a passing result.
 | Lifecycle and execution modes | `npm run test:lifecycle`                           | pending                                                 |
 | Canonical schema/migrations   | `npm run test:migrations`                          | `88/88` passed; zero skips                              |
 | Frozen API contracts          | `npm run test:contracts`                           | `23/23` passed; zero skips                              |
-| Authentication                | `node --test backend/src/auth/auth.test.js`        | pending                                                 |
+| Authentication                | `node --test backend/src/auth/auth.test.js`        | `7/7` passed; zero skips                                |
 | Legacy migration/rollback     | `node --test backend/src/legacy/migration.test.js` | pending                                                 |
 | Native Electron ABI           | `npm --workspace desktop run rebuild:native`       | failing                                                 |
 | Quarantine exclusions         | `npm run check:hygiene`                            | Stage 1 implementation exists; Stage 2 coverage pending |
 | Secret scan                   | `npm run scan:secrets`                             | passed                                                  |
+
+## Task 6 local-authentication commands
+
+All commands used the pinned Node `24.18.0` runtime. Task 6 added no listener
+or Electron dependency.
+
+| Repository command                                                                       | Exit | Result                                                                                                                                         |
+| ---------------------------------------------------------------------------------------- | ---: | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node --test backend/src/auth/auth.test.js` before implementation                        |    1 | Expected RED: all seven tests failed because the authentication, session, pairing, and middleware modules were absent                          |
+| `node --test backend/src/auth/auth.test.js` after implementation                         |    0 | GREEN: install-token, rotation, browser-session, CSRF, pairing, revocation, constant-time, and owner-context coverage passed `7/7`; zero skips |
+| `node --test backend/src/database/schema-contract.test.js backend/src/auth/auth.test.js` |    0 | GREEN: authentication and the expanded exact schema contract passed `45/45`; zero skips                                                        |
+| `npm --workspace backend test`                                                           |    0 | GREEN: complete backend suite passed `286/286`; zero skips                                                                                     |
+| `npm --workspace backend run lint`                                                       |    0 | GREEN: backend ESLint completed with zero warnings                                                                                             |
+
+SQLite stores only versioned keyed HMAC-SHA-256 digests for installation,
+browser-session, CSRF, pairing-challenge, and device credentials. The
+recoverable installation token is stored only through the injected protected
+secret-store reference. Installation bearer credentials are loopback-only.
+Browser sessions are bound to an exact loopback origin, expire after a bounded
+TTL, use HttpOnly SameSite=Strict cookies, and require a separate CSRF token
+for mutation methods.
+
+Android pairing creates a pending device and an expiring challenge without
+activating it. The desktop profile owner must explicitly confirm the
+challenge; credential issuance transactionally consumes it once, activates
+the device, and returns a 256-bit device bearer only once. Revocation changes
+both device and credential state. Service responses pass the frozen pairing
+contract validators. Request middleware derives immutable profile ownership
+from authenticated context and rejects body, query, path, or legacy header
+owner overrides.
 
 ## Known native-rebuild diagnostic
 
