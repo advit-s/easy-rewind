@@ -10,8 +10,8 @@ quarantine backups as sensitive personal data.
 When GitHub private vulnerability reporting is enabled, open the repository's
 **Security** tab, choose **Report a vulnerability**, and submit the report
 there. If it is unavailable, use an existing private contact channel already
-published by the repository owner and request a private incident channel. Do
-not open a public issue. Include file paths and commit identifiers, not secret
+published by the repository owner and request a private incident channel. Do not open a
+public issue. Include file paths and commit identifiers, not secret
 values or personal record contents.
 
 A private reporting channel is a release prerequisite. Do not invent or infer
@@ -79,8 +79,9 @@ Before opening or modifying a legacy database:
    manifest.
 5. Verify the manifest before inspection or migration.
 
-The quarantine is sensitive recovery data, not secure key storage. Exclude it
-from Git, builds, releases, tests, logs, diagnostics, and exports.
+The quarantine is sensitive recovery data, not credential storage. It must be
+excluded from source, builds, tests, logs, diagnostics, exports, and release
+artifacts.
 
 Inspection and migration never open the sole preserved copy. They first create
 a disposable working copy; migration also creates a second dated recovery
@@ -98,9 +99,9 @@ tests against the sole preserved copy.
 ## Credential incidents
 
 An exposed Gemini or other provider key must be revoked at its provider.
-Deleting it from the working tree, rewriting Git history, adding ignore rules,
-or keeping it in the quarantine does not revoke it. The quarantined copy must
-not be treated as secure key storage.
+Deleting it from the working tree does not revoke it. Rewriting Git history
+does not revoke it. Adding ignore rules or keeping it in the quarantine does
+not revoke it. The quarantined copy must not be treated as secure key storage.
 
 Provider-side revocation is an external operator action and remains a release
 blocker until independently attested. Repository verification must not claim

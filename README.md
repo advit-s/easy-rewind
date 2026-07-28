@@ -13,12 +13,13 @@ the compatibility route stays present and returns the stable
 ## Development prerequisites
 
 - Windows 10 or 11 for protected storage and desktop validation
-- Node.js 24.18.0
+- Node.js 24.18.0 LTS
 - npm 11.6.2
 
 The selected Node version applies to development, CI, standalone execution,
-and tests. Packaged Electron uses Electron 43.2.0's embedded Node runtime, so
-`better-sqlite3` is rebuilt and smoke-tested against Electron separately.
+and tests. Packaged Electron uses Electron's embedded Node runtime (Electron
+43.2.0), so `better-sqlite3` is rebuilt and smoke-tested against Electron
+separately.
 
 Install the pinned workspace:
 

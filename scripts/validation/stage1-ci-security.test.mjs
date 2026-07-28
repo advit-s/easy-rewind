@@ -160,12 +160,12 @@ test('security policy treats local artifacts as sensitive and revocation as sepa
     /private\s+vulnerability reporting/i,
     /existing private contact channel/i,
     /release prerequisite/i,
-    /do not open a\s+public issue/i,
+    /do\s+not\s+open\s+a\s+public\s+issue/i,
     /must be revoked/i,
-    /rewriting Git history does not revoke/i,
+    /rewriting\s+Git\s+history\s+does\s+not\s+revoke/i,
     /%LOCALAPPDATA%\\easy-rewind\\legacy-backup\\/i,
-    /recovery data, not credential\s+storage/i,
-    /excluded from source, builds, tests, logs, diagnostics, exports,\s+and release artifacts/i,
+    /recovery\s+data,\s+not\s+credential\s+storage/i,
+    /excluded\s+from\s+source,\s+builds,\s+tests,\s+logs,\s+diagnostics,\s+exports,\s+and\s+release\s+artifacts/i,
   ]) {
     assert.match(policy, phrase);
   }
