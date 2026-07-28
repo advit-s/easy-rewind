@@ -432,6 +432,6 @@ device identifiers, private URLs, and quarantine hashes.
 native ABI, Windows protection, hygiene, audit, and recovery checks pass. The
 online clean-install aggregate remains blocked because sending dependency and
 lockfile metadata to the npm registry was not separately authorized. The
-integration commit is still pending. Gemini provider revocation remains
-separately `blocked` and will continue to block release until externally
-confirmed.
+verified Stage 2 implementation checkpoint is `6f7140e`. Gemini provider
+revocation remains separately `blocked` and will continue to block release
+until externally confirmed.

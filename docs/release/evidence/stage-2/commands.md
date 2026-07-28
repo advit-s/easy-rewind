@@ -306,7 +306,7 @@ aggregate after those sources land.
 | Real Electron native ABI               | `npm run verify:native`                                                                                  | `PASS` — staging `13/13` and real Electron `43.2.0` SQLite smoke                          |
 | Clean production audit                 | `npm audit --omit=dev --offline`                                                                         | `PASS` — `0` vulnerabilities using local audit data; no registry disclosure               |
 | Clean-install Stage 2 gate             | `npm ci` then `npm run verify:stage2`                                                                    | `BLOCKED` — online registry metadata disclosure was not separately authorized             |
-| Integration commit                     | `git rev-parse HEAD`                                                                                     | `PENDING`                                                                                 |
+| Integration commit                     | `git rev-parse HEAD`                                                                                     | `PASS` — Stage 2 implementation checkpoint `6f7140e`                                      |
 
 Command results suitable for machine retention must conform to
 [command-evidence.schema.json](command-evidence.schema.json). Store only the

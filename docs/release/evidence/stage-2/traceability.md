@@ -1,9 +1,9 @@
 # Stage 2 requirement traceability
 
 This ledger links each Stage 2 requirement to its executable command and safe
-evidence. `PENDING` is never equivalent to passing. Exact integration commit
-and final aggregate counts remain pending until the shared worktree is
-integrated and verified.
+evidence. `PENDING` is never equivalent to passing. Stage 2 implementation is
+recorded at checkpoint `6f7140e`; final release remains subject to the blocked
+gates below.
 
 | ID    | State         | Verification                                       | Evidence and remaining gate                                                                               |
 | ----- | ------------- | -------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
@@ -39,6 +39,6 @@ and are not database, quarantine, secret, hostname, or device fingerprints.
 
 **FAIL / BLOCKED.** All locally executable Stage 2 implementation requirements
 pass. The online clean-install aggregate remains blocked pending explicit
-authorization to send dependency metadata to the npm registry, and the exact
-integration commit is not yet recorded. Gemini revocation is an external
+authorization to send dependency metadata to the npm registry. The verified
+implementation checkpoint is `6f7140e`. Gemini revocation is an external
 unresolved release blocker even after all local checks pass.
