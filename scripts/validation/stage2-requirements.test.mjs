@@ -139,7 +139,7 @@ test('global ledger invariants reject a blank required value on an irrelevant-st
     assert.throws(
       () =>
         validateWithExtraRow(fixtureRoot, [
-          'S3-01',
+          'S3-99',
           'blank source',
           '3',
           '',
@@ -158,7 +158,7 @@ test('global ledger invariants reject an unsafe evidence path on an irrelevant-s
     assert.throws(
       () =>
         validateWithExtraRow(fixtureRoot, [
-          'S3-01',
+          'S3-99',
           'unsafe evidence',
           '3',
           'source',
@@ -177,7 +177,7 @@ test('global ledger invariants reject undocumented statuses', () => {
     assert.throws(
       () =>
         validateWithExtraRow(fixtureRoot, [
-          'S3-01',
+          'S3-99',
           'invalid status',
           '3',
           'source',
@@ -196,7 +196,7 @@ test('global ledger invariants enforce ID and stage consistency', () => {
     assert.throws(
       () =>
         validateWithExtraRow(fixtureRoot, [
-          'S3-01',
+          'S3-99',
           'mismatched stage',
           '2',
           'source',
@@ -210,10 +210,10 @@ test('global ledger invariants enforce ID and stage consistency', () => {
   });
 });
 
-test('the Task 1 ledger keeps exactly fourteen Stage 2 rows while allowing valid future-stage rows', () => {
+test('the ledger keeps exactly fourteen Stage 2 rows while allowing existing and synthetic future-stage rows', () => {
   withRequirementsFixture(fixtureRoot => {
     const validated = validateWithExtraRow(fixtureRoot, [
-      'S3-01',
+      'S3-99',
       'future row',
       '3',
       'source',
@@ -223,10 +223,10 @@ test('the Task 1 ledger keeps exactly fourteen Stage 2 rows while allowing valid
       'pending',
     ]);
 
-    assert.equal(validated.rows.length, 15);
+    assert.equal(validated.rows.length, parseRequirementRows(requirementsText).length + 1);
     assert.equal(validated.stage2Rows.length, 14);
     assert.equal(
-      validated.rows.some(row => row.id === 'S3-01' && row.stage === '3'),
+      validated.rows.some(row => row.id === 'S3-99' && row.stage === '3'),
       true
     );
   });

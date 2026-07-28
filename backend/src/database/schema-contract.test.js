@@ -23,27 +23,35 @@ const requiredTables = [
   'connections',
   'diagnostics',
   'digests',
+  'export_runs',
   'flashcards',
   'highlights',
+  'import_runs',
+  'interactions',
   'item_tags',
   'items',
   'items_fts',
   'jobs',
+  'memory_scores',
   'migration_runs',
   'notes',
   'pairing_challenges',
   'profiles',
+  'provider_configurations',
   'quiz_results',
   'reminder_deliveries',
   'reminders',
   'research_jobs',
   'schema_migrations',
   'settings',
+  'sync_acknowledgements',
   'sync_changes',
   'sync_conflicts',
   'sync_cursors',
+  'sync_device_sequences',
   'sync_devices',
   'sync_operations',
+  'sync_snapshots',
   'tags',
 ];
 const requiredRelationalTables = requiredTables.filter(table => table !== 'items_fts');
@@ -259,8 +267,10 @@ test('syncable domain rows carry owner, UUID, timestamps, revisions, and tombsto
     'digests',
     'flashcards',
     'highlights',
+    'interactions',
     'item_tags',
     'items',
+    'memory_scores',
     'notes',
     'quiz_results',
     'reminder_deliveries',
@@ -268,6 +278,7 @@ test('syncable domain rows carry owner, UUID, timestamps, revisions, and tombsto
     'research_jobs',
     'settings',
     'sync_devices',
+    'provider_configurations',
     'tags',
   ];
 
@@ -422,8 +433,11 @@ test('owned relationships reject parent rows belonging to another valid profile'
     [
       'reminder_deliveries.reminder_id',
       `INSERT INTO reminder_deliveries(
-         id, profile_id, reminder_id, channel, state, created_at, updated_at, revision
-       ) VALUES ('cross-delivery', 'profile-2', 'reminder-1', 'desktop', 'pending', 1, 1, 1)`,
+         id, profile_id, reminder_id, device_id, channel, state, created_at, updated_at, revision
+       ) VALUES (
+         'cross-delivery', 'profile-2', 'reminder-1', 'device-2a',
+         'desktop', 'pending', 1, 1, 1
+       )`,
     ],
     [
       'flashcards.item_id',
@@ -540,6 +554,11 @@ test('stable state checks accept documented states and reject unknown values', a
        id, profile_id, kind, title, created_at, updated_at, revision
      ) VALUES (?, ?, ?, ?, ?, ?, ?)`
   ).run('item-1', 'profile-1', 'article', 'Title', 1, 1, 1);
+  db.prepare(
+    `INSERT INTO sync_devices(
+       id, profile_id, name, platform, state, created_at, updated_at, revision
+     ) VALUES ('delivery-device', 'profile-1', 'This PC', 'windows', 'active', 1, 1, 1)`
+  ).run();
 
   await t.test('reminders', () => {
     for (const [index, state] of REMINDER_STATES.entries()) {
@@ -562,16 +581,16 @@ test('stable state checks accept documented states and reject unknown values', a
     for (const [index, state] of ['pending', 'delivering', 'delivered', 'failed', 'cancelled'].entries()) {
       db.prepare(
         `INSERT INTO reminder_deliveries(
-           id, profile_id, reminder_id, channel, state, attempt_count, created_at, updated_at
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(`delivery-${index}`, 'profile-1', 'reminder-0', 'desktop', state, 0, 1, 1);
+           id, profile_id, reminder_id, device_id, channel, state, attempt_count, created_at, updated_at
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(`delivery-${index}`, 'profile-1', `reminder-${index}`, 'delivery-device', 'desktop', state, 0, 1, 1);
     }
     assertConstraint(
       db,
       `INSERT INTO reminder_deliveries(
-         id, profile_id, reminder_id, channel, state, attempt_count, created_at, updated_at
-       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-      ['delivery-invalid', 'profile-1', 'reminder-0', 'desktop', 'unknown', 0, 1, 1]
+         id, profile_id, reminder_id, device_id, channel, state, attempt_count, created_at, updated_at
+       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ['delivery-invalid', 'profile-1', 'reminder-0', 'delivery-device', 'browser', 'unknown', 0, 1, 1]
     );
   });
 

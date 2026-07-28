@@ -25,25 +25,34 @@ function createSchedulerController({ enabled, jobs = [], timers = { setInterval,
     throw new TypeError('Scheduler dependencies are invalid');
   }
   const activeTimers = [];
+  const inFlight = new Set();
+  const jobStates = new Map(jobs.map(job => [job.name, { running: false, lastFailed: false }]));
   let state = enabled ? 'stopped' : 'disabled';
-  let lastRunFailed = false;
 
   function start() {
     if (!enabled || state === 'running') return Promise.resolve();
     state = 'starting';
     try {
       for (const job of jobs) {
+        const jobState = jobStates.get(job.name);
         const timer = timers.setInterval(() => {
-          Promise.resolve()
+          if (state !== 'running' || jobState.running) return;
+          jobState.running = true;
+          const running = Promise.resolve()
             .then(() => job.run())
             .then(
               () => {
-                lastRunFailed = false;
+                jobState.lastFailed = false;
               },
               () => {
-                lastRunFailed = true;
+                jobState.lastFailed = true;
               }
-            );
+            )
+            .finally(() => {
+              jobState.running = false;
+              inFlight.delete(running);
+            });
+          inFlight.add(running);
         }, job.intervalMs);
         timer?.unref?.();
         activeTimers.push(timer);
@@ -57,16 +66,18 @@ function createSchedulerController({ enabled, jobs = [], timers = { setInterval,
     }
   }
 
-  function stop() {
+  async function stop() {
     for (const timer of activeTimers.splice(0).reverse()) timers.clearInterval(timer);
+    if (enabled) state = 'stopping';
+    await Promise.allSettled([...inFlight]);
     state = enabled ? 'stopped' : 'disabled';
-    return Promise.resolve();
   }
 
   function health() {
     if (!enabled) return Object.freeze({ status: 'disabled' });
     if (state === 'running') {
-      return Object.freeze({ status: lastRunFailed ? 'degraded' : 'ready' });
+      const failed = [...jobStates.values()].some(job => job.lastFailed);
+      return Object.freeze({ status: failed ? 'degraded' : 'ready' });
     }
     return Object.freeze({ status: state === 'failed' ? 'unavailable' : 'degraded' });
   }
