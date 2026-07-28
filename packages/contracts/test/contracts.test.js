@@ -312,6 +312,8 @@ test('pairing QR payload accepts only authenticated private-network sync endpoin
   for (const syncEndpoint of [
     'https://8.8.8.8:9443/v1/sync',
     'https://172.32.0.4:9443/v1/sync',
+    'https://169.254.1.1:9443/v1/sync',
+    'https://[fe80::1]:9443/v1/sync',
     'https://[2001:db8::1]:9443/v1/sync',
     'http://192.168.1.20:9443/v1/sync',
     'https://user:password@192.168.1.20:9443/v1/sync',
@@ -405,6 +407,35 @@ test('sync payload bounds use exact serialized JSON length at the 32768 boundary
   const oversized = clone(validFixtures.operation);
   oversized.payload = payloadWithExactJsonLength(MAX_SYNC_PAYLOAD_CHARACTERS + 1);
   assert.equal(validateSyncOperation(oversized).valid, false);
+});
+
+test('sync payload measurement ignores inherited serialization hooks', async () => {
+  const { MAX_SYNC_PAYLOAD_CHARACTERS, validateSyncOperation } = await contracts();
+  const exact = clone(validFixtures.operation);
+  exact.payload = payloadWithExactJsonLength(MAX_SYNC_PAYLOAD_CHARACTERS);
+  const oversized = clone(validFixtures.operation);
+  oversized.payload = payloadWithExactJsonLength(MAX_SYNC_PAYLOAD_CHARACTERS + 1);
+  let hookCalls = 0;
+
+  Object.defineProperty(Object.prototype, 'toJSON', {
+    configurable: true,
+    enumerable: false,
+    value() {
+      hookCalls += 1;
+      return {};
+    },
+  });
+
+  try {
+    const exactResult = validateSyncOperation(exact);
+    const oversizedResult = validateSyncOperation(oversized);
+    assert.deepEqual(
+      { exactValid: exactResult.valid, oversizedValid: oversizedResult.valid, hookCalls },
+      { exactValid: true, oversizedValid: false, hookCalls: 0 }
+    );
+  } finally {
+    delete Object.prototype.toJSON;
+  }
 });
 
 test('sync payloads reject prototype-pollution keys, excessive depth, and non-JSON values', async () => {

@@ -17,14 +17,15 @@ function isPrivateIpv4(host) {
   return (
     octets[0] === 10 ||
     (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
-    (octets[0] === 192 && octets[1] === 168) ||
-    (octets[0] === 169 && octets[1] === 254)
+    (octets[0] === 192 && octets[1] === 168)
   );
 }
 
 function isPrivateIpv6(host) {
-  const lower = host.toLowerCase();
-  return /^f[cd][0-9a-f]{0,2}:/.test(lower) || /^fe[89ab][0-9a-f]?:/.test(lower);
+  const firstHextet = host.toLowerCase().split(':', 1)[0];
+  if (!/^[0-9a-f]{1,4}$/.test(firstHextet)) return false;
+  const value = Number.parseInt(firstHextet, 16);
+  return value >= 0xfc00 && value <= 0xfdff;
 }
 
 function isLocalHostname(host) {

@@ -287,10 +287,11 @@ credential is marked `writeOnly` only in the credential-issue response.
 Challenge responses also carry a closed QR payload bound to the outer
 challenge and expiry. It requires protocol version `1`, an opaque PC
 installation identity, a lowercase SHA-256 TLS fingerprint, and an
-explicit-port HTTPS sync endpoint restricted to private or local network
-addresses. Credentials, queries, fragments, public addresses, and insecure
-schemes are rejected. Endpoint values remain confined to pairing responses and
-are not retained in health, logs, or release evidence.
+explicit-port HTTPS sync endpoint restricted to RFC 1918 IPv4, IPv6 unique
+local addresses, or `.local` hostnames. Credentials, queries, fragments,
+public and link-local addresses, and insecure schemes are rejected. Endpoint
+values remain confined to pairing responses and are not retained in health,
+logs, or release evidence.
 
 Sync requests use UUID-shaped opaque identifiers, integer UTC milliseconds,
 server revisions, stable entity/operation/result/conflict vocabularies,
@@ -305,9 +306,12 @@ stable error code. Pull pages reject duplicate change IDs while leaving cursor
 ordering opaque to clients.
 
 Payloads are JSON objects capped at `64` direct properties, exactly `32,768`
-serialized UTF-16 code units as measured by `JSON.stringify`, and depth `8`.
-Prototype-pollution keys, cycles, accessors, non-JSON values, oversized exact
-serialization, and payload-bearing deletes are rejected safely.
+serialized UTF-16 code units, and depth `8`. Size is measured by a
+deterministic hook-free traversal of own data properties that accounts for
+JSON punctuation and string escaping without invoking inherited `toJSON`
+hooks or getters. Prototype-pollution keys, cycles, accessors, unsafe proxies,
+non-plain objects, non-JSON values, oversized exact serialization, and
+payload-bearing deletes are rejected safely.
 
 The Task 5 contract exposed an unreleased Task 4 mismatch: the database
 reminder CHECK omitted `due` and `failed`. A cross-contract RED failed when it
@@ -333,7 +337,7 @@ verified Task 2 audit counts remain unchanged.
 
 The final pinned-runtime root verification passed with workspace `41/41`,
 containment `21/21`, hygiene `63/63`, backend `278/278`, safe legacy runner
-`57/57`, requirements `18/18`, and contracts `22/22`. Every suite reported
+`57/57`, requirements `18/18`, and contracts `23/23`. Every suite reported
 zero failures and zero skips. Secretlint, the direct hygiene checker, all
 workspace lint, repository format checking, extension validation, and the
 build syntax checks also passed.

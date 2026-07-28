@@ -46,62 +46,119 @@ function schemaErrors(errors) {
   };
 }
 
+function jsonStringCodeUnitLength(value) {
+  let length = 2;
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index);
+    if (
+      codeUnit === 0x22 ||
+      codeUnit === 0x5c ||
+      codeUnit === 0x08 ||
+      codeUnit === 0x09 ||
+      codeUnit === 0x0a ||
+      codeUnit === 0x0c ||
+      codeUnit === 0x0d
+    ) {
+      length += 2;
+    } else if (codeUnit <= 0x1f) {
+      length += 6;
+    } else if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const nextCodeUnit = value.charCodeAt(index + 1);
+      if (nextCodeUnit >= 0xdc00 && nextCodeUnit <= 0xdfff) {
+        length += 2;
+        index += 1;
+      } else {
+        length += 6;
+      }
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      length += 6;
+    } else {
+      length += 1;
+    }
+  }
+  return length;
+}
+
 export function inspectJsonValue(value, { maxDepth = 32, maxCharacters = 262_144 } = {}) {
   const seen = new Set();
 
   function visit(current, depth) {
-    if (depth > maxDepth) return false;
-    if (current === null) return true;
+    if (depth > maxDepth) return -1;
+    if (current === null) return 4;
 
     switch (typeof current) {
       case 'string':
-        return true;
+        return jsonStringCodeUnitLength(current);
       case 'number':
-        return Number.isFinite(current);
+        return Number.isFinite(current) ? String(current).length : -1;
       case 'boolean':
-        return true;
+        return current ? 4 : 5;
       case 'object':
         break;
       default:
-        return false;
+        return -1;
     }
 
-    if (seen.has(current)) return false;
+    if (seen.has(current)) return -1;
     seen.add(current);
 
     if (Array.isArray(current)) {
-      const keys = Object.keys(current);
-      if (keys.length !== current.length || keys.some((key, index) => key !== String(index))) {
-        return false;
-      }
-      for (const key of keys) {
-        const descriptor = Object.getOwnPropertyDescriptor(current, key);
-        if (!descriptor || !Object.hasOwn(descriptor, 'value')) return false;
-        if (!visit(descriptor.value, depth + 1)) return false;
-      }
-    } else {
-      const prototype = Object.getPrototypeOf(current);
-      if (prototype !== Object.prototype && prototype !== null) return false;
       const keys = Reflect.ownKeys(current);
-      if (keys.some(key => typeof key !== 'string')) return false;
-      for (const key of keys) {
-        if (FORBIDDEN_JSON_KEYS.has(key)) return false;
+      const lengthDescriptor = Object.getOwnPropertyDescriptor(current, 'length');
+      if (
+        !lengthDescriptor ||
+        !Object.hasOwn(lengthDescriptor, 'value') ||
+        !Number.isSafeInteger(lengthDescriptor.value) ||
+        lengthDescriptor.value < 0 ||
+        keys.length !== lengthDescriptor.value + 1 ||
+        keys.some(
+          key =>
+            typeof key !== 'string' ||
+            (key !== 'length' &&
+              (!/^(?:0|[1-9][0-9]*)$/.test(key) ||
+                Number(key) >= lengthDescriptor.value ||
+                String(Number(key)) !== key))
+        )
+      ) {
+        return -1;
+      }
+      let length = 2 + Math.max(0, lengthDescriptor.value - 1);
+      for (let index = 0; index < lengthDescriptor.value; index += 1) {
+        const key = String(index);
         const descriptor = Object.getOwnPropertyDescriptor(current, key);
         if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
-          return false;
+          return -1;
         }
-        if (!visit(descriptor.value, depth + 1)) return false;
+        const itemLength = visit(descriptor.value, depth + 1);
+        if (itemLength < 0) return -1;
+        length += itemLength;
       }
+      seen.delete(current);
+      return length;
+    } else {
+      const prototype = Object.getPrototypeOf(current);
+      if (prototype !== Object.prototype && prototype !== null) return -1;
+      const keys = Reflect.ownKeys(current);
+      if (keys.some(key => typeof key !== 'string')) return -1;
+      let length = 2 + Math.max(0, keys.length - 1);
+      for (const key of keys) {
+        if (FORBIDDEN_JSON_KEYS.has(key)) return -1;
+        const descriptor = Object.getOwnPropertyDescriptor(current, key);
+        if (!descriptor || descriptor.enumerable !== true || !Object.hasOwn(descriptor, 'value')) {
+          return -1;
+        }
+        const propertyLength = visit(descriptor.value, depth + 1);
+        if (propertyLength < 0) return -1;
+        length += jsonStringCodeUnitLength(key) + 1 + propertyLength;
+      }
+      seen.delete(current);
+      return length;
     }
-
-    seen.delete(current);
-    return true;
   }
 
   try {
-    if (!visit(value, 0)) return false;
-    const serialized = JSON.stringify(value);
-    return typeof serialized === 'string' && serialized.length <= maxCharacters;
+    const serializedLength = visit(value, 0);
+    return serializedLength >= 0 && serializedLength <= maxCharacters;
   } catch {
     return false;
   }
