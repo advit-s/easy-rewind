@@ -341,13 +341,14 @@ test('scheduler controller creates no timer while disabled and rolls back partia
 
 test('standalone lifecycle owns signal handlers and routes shutdown through the shared runtime', async () => {
   const { startStandalone } = require('./start-standalone');
+  const { createRuntime } = require('./create-runtime');
   const signalSource = new EventEmitter();
   signalSource.exitCode = 0;
   const messages = [];
   const recorded = createRecordedAdapters();
+  const composition = createRuntime(config(), recorded.adapters);
   const standalone = await startStandalone({
-    config: config(),
-    adapters: recorded.adapters,
+    composition,
     signalSource,
     logger: {
       info(message) {

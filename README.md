@@ -1,179 +1,291 @@
-# ⏪ easy-rewind — Knowledge Assistant
+# Easy Rewind
 
-> **Capture ideas. Define terms. Research later. Never forget.**
+Easy Rewind is a local-first knowledge assistant for Chrome and Windows. The
+Stage 2 foundation provides one canonical SQLite database, a shared backend
+lifecycle, local authentication, frozen API contracts, and an explicit
+backup-first legacy migration boundary.
 
-One tool for Chrome and the Windows tray, catching things before they fall through the cracks.
-
-## The 4 Problems It Solves
-
-| #   | Problem                                                           | Solution                                                                    |
-| --- | ----------------------------------------------------------------- | --------------------------------------------------------------------------- |
-| 1   | **Context switching** — search breaks focus                       | **Quick AI lookup** without leaving your tab. Shortcut: `Ctrl+Shift+E`      |
-| 2   | **"Research later"** — amazing things you forget to revisit       | **Save + AI deep research**. Bookmark a page, get AI analysis, get reminded |
-| 3   | **"I know I saw this"** — can't find that solution you watched    | **Full-text searchable history** across all bookmarks                       |
-| 4   | **Ephemeral thoughts** — "I'll do it after this meeting" → forget | **Quick notes with tab-close detection**. Leave the tab → instant reminder  |
+Domain behavior for items, research, reminders, AI, synchronization, and
+import/export is completed in Stage 3. Until a Stage 3 service is connected,
+the compatibility route stays present and returns the stable
+`not_implemented` error instead of pretending work succeeded.
 
 ## Development prerequisites
 
-- Windows 10/11 for the desktop application and containment tooling
-- Node.js 24.18.0 LTS
+- Windows 10 or 11 for protected storage and desktop validation
+- Node.js 24.18.0
 - npm 11.6.2
 
-Install all workspace dependencies from the repository root:
+The selected Node version applies to development, CI, standalone execution,
+and tests. Packaged Electron uses Electron 43.2.0's embedded Node runtime, so
+`better-sqlite3` is rebuilt and smoke-tested against Electron separately.
+
+Install the pinned workspace:
 
 ```powershell
 npm ci
 ```
 
-Run the current standalone backend:
+Run the complete Stage 2 gate:
+
+```powershell
+npm run verify:stage2
+```
+
+This command includes requirements, backend, contract, migration, lifecycle,
+Electron native-module, production audit, secret, and repository-hygiene
+checks. It does not revoke an external provider credential. Do not describe a
+clean-install or release result as passing unless that command was run from the
+intended clean checkout and its exact result was recorded.
+
+## Shared-backend architecture
+
+The core application, database, migration, scheduler, and HTTP modules under
+`backend/src/` do not import Electron. They are composed only when a host
+explicitly starts them.
+
+The same modules support three execution modes:
+
+| Mode                              | Lifecycle owner | Listener and scheduler behavior                                        |
+| --------------------------------- | --------------- | ---------------------------------------------------------------------- |
+| Electron-embedded production mode | Electron        | Electron injects configuration and Windows adapters, starts, and stops |
+| Standalone CLI development mode   | Node CLI        | Loopback listener and scheduler are enabled unless explicitly disabled |
+| Injected test mode                | Test harness    | Temporary database is required; listeners and schedulers are disabled  |
+
+Electron owns application startup, shutdown, health integration, storage-path
+selection, and scheduling policy. It does not own backend domain logic. Tests
+inject temporary paths, clocks, identifiers, adapters, and disabled components
+without starting Electron.
+
+### Standalone startup and shutdown
+
+Start the standalone backend from the repository root:
 
 ```powershell
 npm start
 ```
 
-Run the canonical verification gate:
+The application API binds to `127.0.0.1:3210` by default. Supported standalone
+configuration variables are:
 
-```powershell
-npm run verify
+```text
+EASY_REWIND_STORAGE_ROOT=<exact absolute path>
+EASY_REWIND_PORT=<1-65535>
+EASY_REWIND_SCHEDULERS_ENABLED=false
 ```
 
-Do not place credentials, databases, WAL/SHM files, settings, logs, exports, or
-personal data in the repository. Copy `backend/.env.example` to an untracked
-local configuration only when needed; provision credentials through a protected
-backend-only flow.
+On Windows the default storage root is
+`%LOCALAPPDATA%\easy-rewind\runtime`. An override must remain an exact,
+protected local path accepted by the configuration and permission adapters.
 
-Packaged Electron uses Electron's embedded Node runtime. Native-module
-compatibility is rebuilt and verified separately against the selected Electron
-version during desktop packaging.
+Press `Ctrl+C` or send `SIGINT`/`SIGTERM` for graceful shutdown. The lifecycle
+stops accepting requests, drains bounded active work, stops schedulers and an
+optional LAN gateway, closes listeners, and closes SQLite. Repeated shutdown
+requests are safe. Startup failure rolls back already-started components in
+reverse order and reports a sanitized error.
 
-## Chrome Extension
-
-1. Open `chrome://extensions` → Developer mode
-2. "Load unpacked" → select `extension/` folder
-3. Press `Ctrl+Shift+E` to open the popup
-
-## Windows Desktop App
+### Electron startup and shutdown
 
 ```powershell
 npm run desktop:dev
-npm run package:windows
 ```
 
-Global shortcut: `Ctrl+Shift+Space` to open overlay from anywhere.
+Electron embeds the same composition root, uses
+`%LOCALAPPDATA%\easy-rewind\runtime`, and must inject protected Windows
+secret-storage and file-permission adapters. Backend startup fails closed when
+those adapters are unavailable. Electron stops the backend before the app
+quits.
 
----
+Native compatibility is checked independently:
 
-## Project Structure
-
-```
-easy-rewind/
-├── backend/
-│   ├── data/
-│   │   └── .gitkeep           — Empty runtime-directory placeholder
-│   ├── server.js              — Express server (CORS, rate limiting, static files)
-│   ├── routes/api.js          — API endpoints + SQLite + Gemini AI
-│   ├── .env.example           — Placeholder-only local configuration template
-│   └── package.json
-│
-├── extension/
-│   ├── manifest.json           — MV3 with keyboard shortcuts, alarms, notifications
-│   ├── popup.html              — 4-tab UI (Search, Bookmark, Notes, History)
-│   ├── popup.js                — All extension logic
-│   ├── background.js           — Tab-close detection, alarms, notifications
-│   └── content.js              — Page info reader
-│
-├── desktop/
-│   ├── main.js                 — Electron tray + global shortcut
-│   ├── preload.js              — Safe API bridge
-│   ├── overlay.html            — Global overlay UI
-│   ├── overlay.js              — Overlay logic
-│   └── package.json            — Electron + electron-builder
-│
-├── frontend/
-│   └── dashboard.html          — Analytics dashboard
-│
-└── database/
-    └── setup.sql               — Legacy PostgreSQL/Supabase reference; never used at runtime
+```powershell
+npm run verify:native
 ```
 
----
+That gate requires the pinned Electron binary, rebuilds the staged native
+module, and runs an isolated SQLite migration/read/write/checkpoint/close smoke
+test inside Electron.
 
-## API Endpoints
+### Test execution
 
-All at `http://localhost:5000/api` with `x-user-id` header.
+```powershell
+npm --workspace backend test
+npm run test:contracts
+npm run test:migrations
+npm run test:lifecycle
+```
 
-### Core
+Test mode requires a unique directory under the operating-system temporary
+directory. It rejects repository-contained storage, listeners, schedulers, and
+LAN sync. Importing backend modules must not open a database, create a timer, or
+start a listener.
 
-| Method | Endpoint            | Description                 |
-| ------ | ------------------- | --------------------------- |
-| `GET`  | `/api/health`       | Server health check         |
-| `POST` | `/api/quick-lookup` | AI term definition (cached) |
+## Runtime storage
 
-### Bookmarks
+Paths are derived beneath the selected storage root:
 
-| Method   | Endpoint            | Description                                 |
-| -------- | ------------------- | ------------------------------------------- |
-| `POST`   | `/api/bookmark`     | Save bookmark (with optional reminder)      |
-| `GET`    | `/api/bookmarks`    | List with pagination, sorting, topic filter |
-| `GET`    | `/api/search?q=`    | Search bookmarks                            |
-| `DELETE` | `/api/bookmark/:id` | Delete                                      |
+```text
+runtime\
+├── database\easy-rewind.sqlite3
+├── settings\settings.json
+├── runtime\state.json
+├── secrets\
+├── logs\
+├── exports\
+├── backups\
+└── migration-work\
+```
 
-### Notes (Problem #4)
+The database's matching `-wal` and `-shm` files are live database state, not
+disposable cache files. Runtime databases, sidecars, secrets, settings, logs,
+exports, backups, and migration work must remain outside Git, builds, tests,
+release artifacts, and ordinary logs.
 
-| Method   | Endpoint                | Description                        |
-| -------- | ----------------------- | ---------------------------------- |
-| `POST`   | `/api/notes`            | Create note with optional reminder |
-| `GET`    | `/api/notes`            | List notes                         |
-| `PATCH`  | `/api/notes/:id/toggle` | Toggle completed                   |
-| `DELETE` | `/api/notes/:id`        | Delete                             |
+The legacy quarantine is separate:
 
-### Reminders
+```text
+%LOCALAPPDATA%\easy-rewind\legacy-backup\<timestamp>\
+```
 
-| Method   | Endpoint                  | Description         |
-| -------- | ------------------------- | ------------------- |
-| `POST`   | `/api/reminders`          | Schedule a reminder |
-| `GET`    | `/api/reminders?due=true` | Get due reminders   |
-| `PATCH`  | `/api/reminders/:id`      | Acknowledge/dismiss |
-| `DELETE` | `/api/reminders/:id`      | Delete              |
+It is the preserved recovery source and must never be used as the live runtime
+directory.
 
-### Research (Problem #2)
+## Local authentication
 
-| Method | Endpoint        | Description                     |
-| ------ | --------------- | ------------------------------- |
-| `POST` | `/api/research` | Queue AI deep-research on a URL |
-| `GET`  | `/api/research` | Get results                     |
+The loopback application API does not accept `x-user-id` or an owner supplied
+by the request. Authentication establishes the owner context:
 
-### Push Notifications
+- An install credential is a 256-bit bearer secret accepted only over the
+  loopback application API.
+- A browser exchanges that credential at `POST /v1/session` for a short-lived,
+  HttpOnly, SameSite=Strict session. Mutations require the matching
+  `X-CSRF-Token` and loopback Origin.
+- Mobile/device pairing uses a short-lived, one-use challenge. The PC must give
+  explicit confirmation before a device bearer credential is issued.
+- Revoked devices and credentials are rejected.
 
-| Method   | Endpoint                  | Description              |
-| -------- | ------------------------- | ------------------------ |
-| `POST`   | `/api/push-subscribe`     | Register device for push |
-| `DELETE` | `/api/push-subscribe/:id` | Unsubscribe              |
-| `POST`   | `/api/check-reminders`    | Process due reminders    |
+Recoverable secrets are protected by the host adapter. Only versioned keyed
+digests are stored in SQLite.
 
----
+## API contract and compatibility boundary
 
-## Technology Stack
+Versioned Stage 2 endpoints use `/v1`. Current clients may use registered
+`/api` compatibility aliases while they are repaired in later stages. Unknown
+API versions fail explicitly.
 
-| Layer                | Technology                               |
-| -------------------- | ---------------------------------------- |
-| **Chrome Extension** | Manifest V3, Vanilla JS                  |
-| **Backend**          | Node.js, Express.js                      |
-| **Database**         | SQLite (local file via `better-sqlite3`) |
-| **AI**               | Google Gemini (`gemini-2.5-flash`)       |
-| **Windows App**      | Electron, system tray, global shortcut   |
-| **Dashboard**        | Pure HTML/CSS/JS                         |
-| **Styling**          | Dark purple theme, Inter font            |
+All failures use the stable envelope:
 
----
+```json
+{
+  "error": {
+    "code": "stable_machine_code",
+    "message": "Safe human-readable message",
+    "requestId": "opaque-id",
+    "details": {}
+  }
+}
+```
 
-## Keyboard Shortcuts
+Pagination responses use `items`, `nextCursor`, and `hasMore`; cursors are
+opaque. Health responses expose readiness, version, schema version, API
+version, mode, and `legacyMigrationAvailable` without paths, keys, hostnames,
+or row contents. The frozen schemas live in `packages/contracts/schema/` and
+the matching API description is `docs/api/openapi.json`.
 
-| Shortcut                       | Where              | Action                     |
-| ------------------------------ | ------------------ | -------------------------- |
-| `Ctrl+Shift+E`                 | Browser (Chrome)   | Open easy-rewind popup     |
-| `Ctrl+Shift+N`                 | Browser (Chrome)   | Quick capture note         |
-| `Ctrl+Shift+Space`             | Windows (anywhere) | Open global search overlay |
-| Right-click → "Look up"        | Browser            | Quick lookup selected text |
-| Right-click → "Save selection" | Browser            | Save text as note          |
-| Right-click → "Bookmark page"  | Browser            | Quick bookmark             |
+## Legacy inspection and migration
+
+Easy Rewind never silently imports a legacy database. Startup may only expose
+`legacyMigrationAvailable`. Inspection and migration require an existing
+timestamped quarantine manifest whose database, matching WAL/SHM files, and
+settings checksums verify.
+
+All CLI paths below must be exact absolute paths. Write reports and working
+directories outside the repository.
+
+### 1. Read-only inspection
+
+```powershell
+node scripts/legacy/inspect-legacy.mjs `
+  --manifest C:\absolute\legacy-backup\<timestamp>\manifest.json `
+  --output C:\absolute\private-reports\legacy-inspection.json
+```
+
+Inspection opens only a new disposable copy. Its output is marked
+`SENSITIVE MIGRATION METADATA` and contains schema signatures, safe row
+counts, conflicts, unsupported values, and estimated actions—not row content
+or credential-like values.
+
+### 2. Dry-run plan
+
+```powershell
+node scripts/legacy/migrate-legacy.mjs plan `
+  --manifest C:\absolute\legacy-backup\<timestamp>\manifest.json `
+  --destination C:\absolute\runtime\database\easy-rewind.sqlite3 `
+  --work-root C:\absolute\private-work `
+  --recovery-root C:\absolute\private-recovery `
+  --rollback-root C:\absolute\private-rollback `
+  --output C:\absolute\private-reports\migration-plan.json `
+  --available-disk-bytes 10737418240
+```
+
+Planning verifies the quarantine, creates a second dated recovery copy, works
+from a disposable copy, and reports counts, skips, transforms, conflicts,
+warnings, required disk, and rollback path. Review the report before
+confirming.
+
+### 3. Explicit migration
+
+Use only the exact fingerprint printed by the reviewed plan:
+
+```powershell
+node scripts/legacy/migrate-legacy.mjs run `
+  --plan C:\absolute\private-reports\migration-plan.json `
+  --confirm <64-character-plan-fingerprint> `
+  --destination C:\absolute\runtime\database\easy-rewind.sqlite3 `
+  --work-root C:\absolute\private-work
+```
+
+Migration is transactional, verifies post-import invariants, records the source
+fingerprint, and retains rollback metadata. Repeating the same source is
+rejected rather than silently reimported.
+
+### 4. Rollback
+
+Stop the backend, retain the failed runtime database as a private diagnostic
+artifact, and restore only from verified rollback metadata:
+
+```powershell
+node scripts/legacy/migrate-legacy.mjs rollback `
+  --metadata C:\absolute\private-rollback\rollback-metadata.json `
+  --destination C:\absolute\runtime\database\easy-rewind.sqlite3
+```
+
+Restart first with listeners and schedulers disabled, verify integrity and
+schema state, then re-enable loopback operation. Never modify, checkpoint,
+delete, or test against the sole preserved quarantine copy.
+
+## Stage 2 / Stage 3 boundary
+
+Stage 2 owns the canonical schema, migrations, backend lifecycle, local
+authentication, API and sync contracts, legacy inspection/migration safety,
+and Electron native-module verification.
+
+Stage 3 owns truthful domain behavior for items, bookmarks, notes, highlights,
+tags, research, reminders, AI jobs, synchronization convergence, and
+import/export. Stage 2 compatibility routes may return `not_implemented` until
+their injected Stage 3 service exists. Client repair must consume the frozen
+contract rather than inventing new owner, pagination, error, or cursor shapes.
+
+## Repository layout
+
+```text
+backend/             Electron-independent backend and canonical migrations
+desktop/             Electron lifecycle/configuration and Windows UI
+extension/           Chrome Manifest V3 client
+frontend/            Dashboard client
+packages/contracts/  Runtime-independent API and sync contracts
+scripts/             Containment, hygiene, migration, build, and verification tools
+docs/api/            Frozen OpenAPI document
+docs/release/        Requirements and evidence records
+database/setup.sql   Legacy reference only; never used at runtime
+```

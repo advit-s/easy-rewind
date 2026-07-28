@@ -9,16 +9,26 @@
  * - Quick capture + search without opening browser
  */
 
-const { app, BrowserWindow, Tray, Menu, Notification, globalShortcut, nativeImage, clipboard, ipcMain } = require('electron');
+const {
+  app,
+  BrowserWindow,
+  Tray,
+  Menu,
+  Notification,
+  globalShortcut,
+  nativeImage,
+  clipboard,
+  ipcMain,
+  safeStorage,
+} = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const { spawn } = require('child_process');
+const { createEmbeddedBackendLifecycle } = require('./backend-lifecycle');
 
 // ─────────────────────────────────────────────
 // CONFIG
 // ─────────────────────────────────────────────
-const API_BASE = 'http://localhost:5000/api';
 const REMINDER_CHECK_INTERVAL = 2 * 60 * 1000; // 2 minutes
 const isDev = process.argv.includes('--dev');
 
@@ -31,15 +41,24 @@ let reminderInterval = null;
 let userId = null;
 let desktopSettings = { apiBase: '', apiKey: '', aiModel: 'gemini-2.5-flash', reminderMinutes: 60 };
 
-// Backend process management
-let backendProcess = null;
 let backendRunning = false;
-const BACKEND_DIR = path.join(__dirname, '..', 'backend');
+
+function loadWindowsPlatformAdapters() {
+  return require('./windows-platform-adapters').createWindowsPlatformAdapters({
+    localAppData: process.env.LOCALAPPDATA,
+    safeStorage,
+  });
+}
+
+const backendLifecycle = createEmbeddedBackendLifecycle({
+  createPlatformAdapters: loadWindowsPlatformAdapters,
+  electronApp: app,
+});
 
 function getEffectiveApiBase() {
-  return (desktopSettings.apiBase && desktopSettings.apiBase.trim())
+  return desktopSettings.apiBase && desktopSettings.apiBase.trim()
     ? desktopSettings.apiBase.replace(/\/+$/, '')
-    : 'http://localhost:5000';
+    : 'http://127.0.0.1:3210';
 }
 
 const DESKTOP_SETTINGS_PATH = path.join(app.getPath('userData'), 'desktop-settings.json');
@@ -66,97 +85,29 @@ function saveDesktopSettings() {
 // BACKEND SERVER MANAGEMENT
 // ─────────────────────────────────────────────
 
-function startBackend() {
-  if (backendProcess) {
-    console.log('[Backend] Already running');
-    return;
+async function startBackend() {
+  if (backendLifecycle.state() === 'running') return;
+  console.log('[Backend] Starting embedded shared runtime...');
+  try {
+    await backendLifecycle.start();
+    backendRunning = true;
+    console.log('[Backend] Shared runtime is ready');
+  } catch (error) {
+    console.error(`[Backend] Startup blocked safely (${error?.code || 'BACKEND_START_FAILED'}).`);
+    backendRunning = false;
   }
-
-  console.log('[Backend] Starting Node.js server...');
-
-  const nodeExe = process.platform === 'win32' ? 'node.exe' : 'node';
-
-  backendProcess = spawn(nodeExe, ['server.js'], {
-    cwd: BACKEND_DIR,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    windowsHide: false,
-    shell: process.platform === 'win32',
-  });
-
-  backendRunning = true;
-
-  backendProcess.stdout.on('data', (data) => {
-    console.log(`[Backend] ${data.toString().trim()}`);
-  });
-
-  backendProcess.stderr.on('data', (data) => {
-    console.error(`[Backend] ${data.toString().trim()}`);
-  });
-
-  backendProcess.on('error', (err) => {
-    console.error('[Backend] Failed to start:', err.message);
-    backendRunning = false;
-    backendProcess = null;
-    if (typeof updateTrayMenu === 'function') updateTrayMenu();
-  });
-
-  backendProcess.on('exit', (code, signal) => {
-    console.log(`[Backend] Exited (code=${code}, signal=${signal})`);
-    backendRunning = false;
-    backendProcess = null;
-    if (typeof updateTrayMenu === 'function') updateTrayMenu();
-  });
-
-  waitForBackend();
   if (typeof updateTrayMenu === 'function') updateTrayMenu();
 }
 
-function stopBackend() {
-  if (!backendProcess) {
-    console.log('[Backend] Not running');
-    return;
-  }
-
-  console.log('[Backend] Stopping server...');
-
-  if (process.platform === 'win32') {
-    try {
-      require('child_process').execSync(
-        `taskkill /PID ${backendProcess.pid} /T /F`,
-        { stdio: 'ignore', timeout: 5000 }
-      );
-    } catch (_) {
-      backendProcess.kill('SIGTERM');
-    }
-  } else {
-    backendProcess.kill('SIGTERM');
-  }
-
+async function stopBackend() {
+  await backendLifecycle.stop();
   backendRunning = false;
-  backendProcess = null;
   if (typeof updateTrayMenu === 'function') updateTrayMenu();
 }
 
-function restartBackend() {
-  stopBackend();
-  setTimeout(startBackend, 1500);
-}
-
-async function waitForBackend() {
-  const maxAttempts = 30;
-  for (let i = 0; i < maxAttempts; i++) {
-    try {
-      await apiCall('/health');
-      console.log('[Backend] Server is ready');
-      if (typeof updateTrayMenu === 'function') updateTrayMenu();
-      return;
-    } catch (_) {
-      // Server not ready yet
-    }
-    await new Promise(r => setTimeout(r, 500));
-  }
-  console.warn('[Backend] Server did not become ready within timeout');
-  if (typeof updateTrayMenu === 'function') updateTrayMenu();
+async function restartBackend() {
+  await stopBackend();
+  await startBackend();
 }
 
 // ─────────────────────────────────────────────
@@ -178,9 +129,9 @@ function apiCall(path, options = {}) {
       },
     };
 
-    const req = http.request(httpOptions, (res) => {
+    const req = http.request(httpOptions, res => {
       let data = '';
-      res.on('data', chunk => data += chunk);
+      res.on('data', chunk => (data += chunk));
       res.on('end', () => {
         try {
           const parsed = JSON.parse(data);
@@ -192,7 +143,7 @@ function apiCall(path, options = {}) {
       });
     });
 
-    req.on('error', (err) => reject(new Error(`Cannot reach server: ${err.message}`)));
+    req.on('error', err => reject(new Error(`Cannot reach server: ${err.message}`)));
 
     if (options.body) {
       req.write(JSON.stringify(options.body));
@@ -329,9 +280,7 @@ function showDesktopNotification(title, body, data = {}) {
 function updateTrayMenu() {
   if (!tray) return;
 
-  const backendStatus = backendRunning
-    ? '✅ Backend Running'
-    : '❌ Backend Stopped';
+  const backendStatus = backendRunning ? '✅ Backend Running' : '❌ Backend Stopped';
 
   const template = [
     {
@@ -396,8 +345,8 @@ function createTray() {
     const buf = Buffer.alloc(size * size * 4);
     for (let i = 0; i < size * size; i++) {
       const offset = i * 4;
-      buf[offset] = 124;     // R
-      buf[offset + 1] = 58;  // G
+      buf[offset] = 124; // R
+      buf[offset + 1] = 58; // G
       buf[offset + 2] = 237; // B
       buf[offset + 3] = 255; // A
     }
@@ -418,11 +367,11 @@ function createTray() {
 // ─────────────────────────────────────────────
 // APP LIFECYCLE
 // ─────────────────────────────────────────────
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   loadDesktopSettings();
 
   // Auto-start the backend server
-  startBackend();
+  await startBackend();
   // Register global shortcut
   const shortcut = globalShortcut.register('Ctrl+Shift+Space', () => {
     toggleOverlay();
@@ -451,7 +400,9 @@ app.whenReady().then(() => {
   try {
     const raw = fs.readFileSync(storePath, 'utf8');
     config = JSON.parse(raw);
-  } catch { /* first run — empty config */ }
+  } catch {
+    /* first run — empty config */
+  }
   userId = config.easy_rewind_user_id;
   if (!userId) {
     userId = 'desktop_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
@@ -474,20 +425,23 @@ app.whenReady().then(() => {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ client_id: userId, client_type: 'desktop' }),
-  }).then(r => r.json()).then(session => {
-    if (session.user_id && session.user_id !== userId) {
-      userId = session.user_id;
-      config.easy_rewind_user_id = userId;
-      try {
-        fs.writeFileSync(storePath, JSON.stringify(config, null, 2));
-      } catch (err) {
-        console.warn('[Store] Could not save session user_id:', err.message);
+  })
+    .then(r => r.json())
+    .then(session => {
+      if (session.user_id && session.user_id !== userId) {
+        userId = session.user_id;
+        config.easy_rewind_user_id = userId;
+        try {
+          fs.writeFileSync(storePath, JSON.stringify(config, null, 2));
+        } catch (err) {
+          console.warn('[Store] Could not save session user_id:', err.message);
+        }
+        console.log(`   Canonical user_id resolved: ${userId.slice(0, 20)}...`);
       }
-      console.log(`   Canonical user_id resolved: ${userId.slice(0, 20)}...`);
-    }
-  }).catch(() => {
-    console.log('[Session] Could not reach server, using local user ID.');
-  });
+    })
+    .catch(() => {
+      console.log('[Session] Could not reach server, using local user ID.');
+    });
 
   // Auto-open overlay on first launch
   if (isDev) {
@@ -499,12 +453,19 @@ app.on('window-all-closed', () => {
   // Don't quit — we're a tray app
 });
 
-app.on('before-quit', () => {
+let backendShutdownComplete = false;
+
+app.on('before-quit', event => {
   app.isQuitting = true;
+  if (backendShutdownComplete) return;
+  event.preventDefault();
+  void stopBackend().finally(() => {
+    backendShutdownComplete = true;
+    app.quit();
+  });
 });
 
 app.on('will-quit', () => {
   globalShortcut.unregisterAll();
   if (reminderInterval) clearInterval(reminderInterval);
-  stopBackend();
 });

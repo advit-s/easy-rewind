@@ -11,10 +11,14 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
+    "install:electron": "node ../node_modules/electron/install.js",
     "rebuild:native": "node ../scripts/build/rebuild-electron-native.mjs",
+    "verify:native": "npm run install:electron && node --test ../scripts/build/rebuild-electron-native.test.mjs && npm run rebuild:native",
     "build": "npm run rebuild:native && electron-builder --win --config build.config.json"
   },
-  "dependencies": {},
+  "dependencies": {
+    "better-sqlite3": "13.0.1"
+  },
   "devDependencies": {
     "@electron/rebuild": "4.2.0",
     "electron": "43.2.0",

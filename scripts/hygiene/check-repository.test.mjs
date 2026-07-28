@@ -113,6 +113,12 @@ for (const forbidden of [
   'legacy-backup/manifest.json',
   'quarantine/manifest.json',
   'migration-work/copy.db',
+  'legacy-inspection-work/copy.json',
+  'migration-temp/copy.json',
+  'backend/settings.json',
+  'backend/test/fixtures/chosen.legacy-inspection-report.json',
+  'packages/example/legacy-manifest.json',
+  'backend/test/fixtures/legacy/manifest.json',
   'coverage/index.html',
   'test-results/report.json',
   'playwright-report/index.html',
@@ -297,6 +303,7 @@ test('ignore rules preserve release evidence while excluding root release output
   const prettierignore = readFileSync(repositoryPrettierignore, 'utf8');
   assert.match(prettierignore, /^\/release\/?$/m);
   assert.doesNotMatch(prettierignore, /^release\/?$/m);
+  assert.equal(git(root, 'check-ignore', '--quiet', 'private/chosen.legacy-inspection-report.json').status, 0);
 });
 
 test('filesystem mode still detects ignored runtime material', () => {

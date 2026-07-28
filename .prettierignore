@@ -12,6 +12,12 @@ exports
 legacy-backup
 quarantine
 migration-work
+migration-temp
+legacy-inspection-work
+inspection-work
+*.legacy-inspection-report.json
+*legacy-manifest.json
+**/legacy/**/manifest.json
 backend/data
 package-lock.json
 /docs/api/openapi.json

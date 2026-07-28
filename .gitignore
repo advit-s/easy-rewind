@@ -33,6 +33,15 @@ quarantine/
 **/quarantine/
 migration-work/
 **/migration-work/
+migration-temp/
+**/migration-temp/
+legacy-inspection-work/
+**/legacy-inspection-work/
+inspection-work/
+**/inspection-work/
+*.legacy-inspection-report.json
+*legacy-manifest.json
+**/legacy/**/manifest.json
 
 # Logs, diagnostics, exports, coverage, and temporary test data
 *.log

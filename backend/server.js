@@ -1,42 +1,69 @@
 'use strict';
 
-/**
- * Thin standalone entry point.
- *
- * Compatibility exports remain lazy until the canonical routes replace the
- * legacy route adapter in Stage 2 Task 11. Importing this module performs no
- * I/O and never starts a listener.
- */
+const { resolve } = require('node:path');
+const { startStandalone } = require('./src/lifecycle/start-standalone');
 
-function createApp(options) {
-  return require('./legacy-server').createApp(options);
+function parsePort(value) {
+  if (value === undefined || value === '') return 3210;
+  if (!/^[1-9][0-9]*$/.test(value)) throw new TypeError('Standalone port is invalid');
+  const port = Number(value);
+  if (port > 65_535) throw new TypeError('Standalone port is invalid');
+  return port;
 }
 
-function startServer(options) {
-  return require('./legacy-server').startServer(options);
+function createStandaloneConfigFromEnvironment(environment = process.env) {
+  if (environment === null || typeof environment !== 'object') {
+    throw new TypeError('Standalone environment is invalid');
+  }
+  const localAppData = environment.LOCALAPPDATA;
+  if (typeof localAppData !== 'string' || localAppData.trim().length === 0) {
+    throw new TypeError('Windows local application data is unavailable');
+  }
+  const storageRoot = resolve(environment.EASY_REWIND_STORAGE_ROOT || resolve(localAppData, 'easy-rewind', 'runtime'));
+  return {
+    mode: 'standalone',
+    storageRoot,
+    applicationApi: {
+      enabled: true,
+      host: '127.0.0.1',
+      port: parsePort(environment.EASY_REWIND_PORT),
+    },
+    scheduler: {
+      enabled: environment.EASY_REWIND_SCHEDULERS_ENABLED !== 'false',
+    },
+    lanSync: { enabled: false },
+  };
 }
 
-async function runStandalone() {
-  let runtime;
-  let shutdownPromise;
-  const shutdown = () => {
-    if (shutdownPromise === undefined) {
-      shutdownPromise = Promise.resolve(runtime?.close()).catch(() => {
-        process.exitCode = 1;
-      });
-    }
-    return shutdownPromise;
-  };
-  const onSignal = () => {
-    void shutdown();
-  };
+async function runStandalone({
+  config,
+  adapters,
+  createPlatformAdapters = options => {
+    const { createStandaloneWindowsPlatformAdapters } = require('../desktop/windows-platform-adapters');
+    return createStandaloneWindowsPlatformAdapters(options);
+  },
+  environment = process.env,
+  signalSource = process,
+  logger = console,
+  start = startStandalone,
+} = {}) {
   try {
-    runtime = await startServer();
-    process.once('SIGINT', onSignal);
-    process.once('SIGTERM', onSignal);
+    const resolvedConfig = config ?? createStandaloneConfigFromEnvironment(environment);
+    const resolvedAdapters =
+      adapters ??
+      createPlatformAdapters({
+        localAppData: environment.LOCALAPPDATA,
+      });
+    return await start({
+      adapters: resolvedAdapters,
+      config: resolvedConfig,
+      logger,
+      signalSource,
+    });
   } catch {
-    console.error('Easy Rewind backend startup failed safely.');
-    process.exitCode = 1;
+    logger.error('Easy Rewind backend startup failed safely.');
+    signalSource.exitCode = 1;
+    return undefined;
   }
 }
 
@@ -44,4 +71,8 @@ if (require.main === module) {
   void runStandalone();
 }
 
-module.exports = { createApp, runStandalone, startServer };
+module.exports = {
+  createStandaloneConfigFromEnvironment,
+  runStandalone,
+  startStandalone,
+};

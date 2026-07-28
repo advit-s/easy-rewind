@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://easy-rewind.local/evidence/command-evidence.schema.json",
+  "title": "Easy Rewind redacted command evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "commandId", "command", "status", "recordedAt", "exitCode", "counts", "redaction"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "commandId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{2,79}$"
+    },
+    "command": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 500,
+      "description": "Repository-relative command with no personal paths, secrets, arguments containing data, or host identifiers."
+    },
+    "workingDirectory": {
+      "enum": ["repository-root", "backend-workspace", "contracts-workspace", "desktop-workspace"]
+    },
+    "status": {
+      "enum": ["expected-red", "passed", "failed", "pending", "blocked"]
+    },
+    "recordedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "exitCode": {
+      "type": ["integer", "null"],
+      "minimum": 0,
+      "description": "Null is permitted only while status is pending or blocked."
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["passed", "failed", "skipped"],
+      "properties": {
+        "passed": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "failed": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "skipped": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "durationMs": {
+      "type": ["integer", "null"],
+      "minimum": 0
+    },
+    "toolVersions": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9A-Za-z.+_-]{1,40}$"
+      },
+      "propertyNames": {
+        "pattern": "^[a-z0-9-]{1,30}$"
+      }
+    },
+    "summary": {
+      "type": "string",
+      "maxLength": 1000,
+      "description": "Safe classifications and aggregate counts only; no raw command output."
+    },
+    "evidenceRefs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^docs/release/evidence/stage-2/[A-Za-z0-9._/-]+$"
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["rawOutputRetained", "sensitiveFieldsOmitted"],
+      "properties": {
+        "rawOutputRetained": {
+          "const": false
+        },
+        "sensitiveFieldsOmitted": {
+          "const": true
+        },
+        "notes": {
+          "type": "string",
+          "maxLength": 500
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "enum": ["pending", "blocked"]
+          }
+        },
+        "required": ["status"]
+      },
+      "then": {
+        "properties": {
+          "exitCode": {
+            "type": "null"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "exitCode": {
+            "type": "integer"
+          }
+        }
+      }
+    }
+  ]
+}

@@ -266,16 +266,56 @@ details, keys, and row data are discarded. The standalone signal owner uses
 the shared lifecycle, while the thin root entry point keeps a lazy legacy
 route adapter until Task 11 replaces those routes.
 
-## Known native-rebuild diagnostic
+## Task 10 Electron native staging commands
 
-The failing production script places the staging manifest one directory above
-the value passed as `--module-dir`. A diagnostic with the manifest copied into
-that module directory rebuilt `better-sqlite3` successfully. The production
-script remains unchanged and failing in this baseline.
+All results below omit machine-local paths. The focused tests verify staging
+construction and inspection but do not substitute for executing the native
+module in Electron.
+
+| Repository command                                           | Exit | Result                                                                                                                                                                                                                                   |
+| ------------------------------------------------------------ | ---: | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `node --test scripts/build/rebuild-electron-native.test.mjs` |    0 | GREEN: staging layout, exact dependency set, shared-binding preservation, N-API-compatible rebuild handling, binary/version precheck, forbidden-artifact inspection, failure cleanup, and smoke orchestration passed `13/13`; zero skips |
+| `npm run test:workspace`                                     |    0 | GREEN at the native-staging checkpoint: workspace validation passed `51/51`; zero skips                                                                                                                                                  |
+| `npm run verify:native`                                      |    0 | GREEN: Electron `43.2.0` loaded the staged native module and completed the external temporary SQLite migrate/write/read/WAL-checkpoint/close smoke                                                                                       |
+
+The final native record must show that the pinned Electron runtime loads the
+staged `better-sqlite3`, opens an external temporary database, applies
+canonical migrations, writes and reads one safe fixture record, performs a WAL
+checkpoint, closes the database, and removes the temporary staging tree.
+
+## Task 11 frozen and compatibility HTTP routes
+
+| Repository command                                                                                   | Exit | Result                                                                                                                                                                                                                   |
+| ---------------------------------------------------------------------------------------------------- | ---: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `node --test backend/src/http/compatibility-routes.test.js backend/src/http/contract-routes.test.js` |    0 | GREEN: compatibility aliases, authentication, ownership, pagination, errors, origins, content limits, headers, provider-key rejection, version rejection, and explicit unimplemented behavior passed `17/17`; zero skips |
+| `npm --workspace backend test`                                                                       |    0 | GREEN at the route checkpoint: complete backend suite passed `324/324`; zero skips                                                                                                                                       |
+
+The route checkpoint predates the pending legacy migration and final
+composition integration. Its backend count must not be copied into the final
+aggregate after those sources land.
+
+## Stage 2 aggregate
+
+| Gate                                   | Command                                                                                                  | State                                                                                     |
+| -------------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Complete backend suite                 | `npm --workspace backend test`                                                                           | `PASS` — `340/340`, zero skips                                                            |
+| Legacy inspection and exclusions       | `node --test backend/src/legacy/inspect-legacy.test.js && npm run check:hygiene && npm run scan:secrets` | `PASS` — focused inspection/hygiene `81/81`; Git-aware hygiene and secret scan passed     |
+| Backup-first migration and rollback    | `node --test backend/src/legacy/migration.test.js`                                                       | `PASS` — `8/8`, zero skips; combined migration/schema/legacy gate `109/109`               |
+| Shared standalone/Electron composition | `npm run test:lifecycle`                                                                                 | `PASS` — `16/16`, zero skips                                                              |
+| Windows protected adapters             | Focused adapters plus disposable Windows smoke                                                           | `PASS` — `11/11`; CurrentUser DPAPI, ACL verification, encrypted set/get/delete completed |
+| Real Electron native ABI               | `npm run verify:native`                                                                                  | `PASS` — staging `13/13` and real Electron `43.2.0` SQLite smoke                          |
+| Clean production audit                 | `npm audit --omit=dev --offline`                                                                         | `PASS` — `0` vulnerabilities using local audit data; no registry disclosure               |
+| Clean-install Stage 2 gate             | `npm ci` then `npm run verify:stage2`                                                                    | `BLOCKED` — online registry metadata disclosure was not separately authorized             |
+| Integration commit                     | `git rev-parse HEAD`                                                                                     | `PENDING`                                                                                 |
+
+Command results suitable for machine retention must conform to
+[command-evidence.schema.json](command-evidence.schema.json). Store only the
+repository-relative command, status, exit code, aggregate counts, safe summary,
+tool versions, evidence links, and the mandatory redaction declaration. Do not
+store raw output.
 
 ## Recovery boundary
 
-If later Stage 2 migration work fails, close all runtime resources, verify the
-pre-migration runtime backup, restore it to a new path, and rerun integrity
-checks with listeners and schedulers disabled. Never open, overwrite, restore
-onto, or mutate the sole quarantine copy.
+The complete procedure and rehearsal ledger are in
+[recovery.md](recovery.md). Any pending rehearsal row keeps the Stage 2 exit
+decision at FAIL.

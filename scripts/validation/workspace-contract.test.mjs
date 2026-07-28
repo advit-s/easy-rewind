@@ -66,6 +66,10 @@ test('workspace exposes the complete Stage 1 command contract and selected packa
     'test:backend',
     'test:backend:legacy-safe',
     'test:contracts',
+    'test:migrations',
+    'test:lifecycle',
+    'audit:production',
+    'verify:stage2',
     'validate:extension',
     'scan:secrets',
     'check:hygiene',
@@ -90,11 +94,25 @@ test('workspace exposes the complete Stage 1 command contract and selected packa
   assert.equal(Object.hasOwn(backend.devDependencies, 'jest'), false);
   assert.equal(repository.scripts['test:integration'], 'npm run test:backend && npm run test:backend:legacy-safe');
   assert.equal(repository.scripts['test:backend'], 'npm --workspace backend test');
-  assert.equal(repository.scripts['test:contracts'], 'npm --workspace @easy-rewind/contracts test');
   assert.equal(
-    repository.scripts.verify,
-    'npm run verify:stage1 && npm run test:requirements && npm run test:contracts'
+    repository.scripts['test:contracts'],
+    'npm --workspace @easy-rewind/contracts test && node --test backend/src/http/contract-routes.test.js backend/src/http/compatibility-routes.test.js'
   );
+  assert.equal(
+    repository.scripts['test:migrations'],
+    'node --test backend/src/database/*.test.js backend/src/legacy/*.test.js'
+  );
+  assert.equal(backend.scripts['test:migrations'], 'node --test src/database/*.test.js src/legacy/*.test.js');
+  assert.equal(
+    repository.scripts['test:lifecycle'],
+    'node --test backend/src/lifecycle/*.test.js backend/test/import-safety.test.js'
+  );
+  assert.equal(repository.scripts['audit:production'], 'npm audit --omit=dev');
+  assert.equal(
+    repository.scripts['verify:stage2'],
+    'npm run test:requirements && npm --workspace backend test && npm run test:contracts && npm run test:migrations && npm run test:lifecycle && npm run verify:native && npm run audit:production && npm run scan:secrets && npm run check:hygiene'
+  );
+  assert.equal(repository.scripts.verify, 'npm run verify:stage1 && npm run verify:stage2');
   assert.equal(backend.scripts.test, 'node --test test/**/*.test.js src/**/*.test.js');
   assert.doesNotMatch(backend.scripts.test, /forceExit|detectOpenHandles|jest/i);
   assert.equal(desktop.devDependencies.electron, '43.2.0');
@@ -162,4 +180,38 @@ test('Secretlint ignores generated and sensitive outputs without excluding relea
   }
   assert.ok(!ignored.some(pattern => pattern === '**' || pattern === 'backend/**'));
   assert.ok(!ignored.some(pattern => pattern.includes('docs/release')));
+});
+
+test('operator documentation covers the shared runtime, protected storage, migration boundary, and recovery', () => {
+  const readme = readFileSync(join(root, 'README.md'), 'utf8').replace(/\s+/g, ' ');
+  const security = readFileSync(join(root, 'SECURITY.md'), 'utf8').replace(/\s+/g, ' ');
+
+  for (const required of [
+    'Electron-embedded production mode',
+    'Standalone CLI development mode',
+    'Injected test mode',
+    'EASY_REWIND_STORAGE_ROOT',
+    'SIGINT',
+    'SIGTERM',
+    '/v1',
+    '/api',
+    'not_implemented',
+    'SENSITIVE MIGRATION METADATA',
+    'Stage 3',
+  ]) {
+    assert.match(readme, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  }
+
+  for (const required of [
+    'safeStorage',
+    'DPAPI',
+    'current Windows user',
+    'explicit confirmation',
+    'CSRF',
+    'quarantine',
+    'revoke',
+    'sole preserved copy',
+  ]) {
+    assert.match(security, new RegExp(required.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  }
 });

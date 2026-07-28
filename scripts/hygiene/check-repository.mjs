@@ -17,6 +17,9 @@ const forbiddenSegments = new Set([
   'legacy-backup',
   'quarantine',
   'migration-work',
+  'migration-temp',
+  'legacy-inspection-work',
+  'inspection-work',
   'coverage',
   '.nyc_output',
   'test-results',
@@ -58,7 +61,10 @@ function isForbidden(relativePath) {
   const name = basename(normalized);
 
   if (forbiddenExact.has(normalized)) return true;
-  if (name === 'settings.json' && segments.includes('data')) return true;
+  if (name === 'settings.json' && normalized !== '.claude/settings.json') return true;
+  if (name === 'legacy-manifest.json' || name.endsWith('.legacy-manifest.json')) return true;
+  if (name === 'manifest.json' && segments.includes('legacy')) return true;
+  if (name.endsWith('.legacy-inspection-report.json')) return true;
   if (forbiddenNames.has(name)) return true;
   if (
     segments.some(

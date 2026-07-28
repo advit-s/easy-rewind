@@ -1,8 +1,8 @@
 'use strict';
 
-const { createRuntime } = require('./create-runtime');
+const { createBackendComposition } = require('./composition-root');
 
-async function startStandalone({ config, adapters, signalSource = process, logger = console } = {}) {
+async function startStandalone({ composition, config, adapters, signalSource = process, logger = console } = {}) {
   if (
     signalSource === null ||
     typeof signalSource !== 'object' ||
@@ -15,7 +15,15 @@ async function startStandalone({ config, adapters, signalSource = process, logge
   ) {
     throw new TypeError('Standalone lifecycle dependencies are invalid');
   }
-  const runtime = createRuntime(config, adapters);
+  const runtime = composition ?? createBackendComposition({ config, adapters });
+  if (
+    runtime === null ||
+    typeof runtime !== 'object' ||
+    typeof runtime.start !== 'function' ||
+    typeof runtime.stop !== 'function'
+  ) {
+    throw new TypeError('Standalone composition is invalid');
+  }
   await runtime.start();
   let shutdownPromise;
   const shutdown = () => {

@@ -3,10 +3,15 @@
 const { fail } = require('./auth-error');
 const { setRequestContext } = require('../http/request-context');
 
-const OWNER_KEYS = Object.freeze(['ownerId', 'profileId', 'userId']);
+const OWNER_KEYS = new Set(['ownerId', 'owner_id', 'profileId', 'profile_id', 'userId', 'user_id']);
 
-function hasOwnerKey(value) {
-  return value !== null && typeof value === 'object' && OWNER_KEYS.some(key => Object.hasOwn(value, key));
+function hasOwnerKey(value, observed = new WeakSet()) {
+  if (value === null || typeof value !== 'object' || observed.has(value)) return false;
+  observed.add(value);
+  for (const [key, nested] of Object.entries(value)) {
+    if (OWNER_KEYS.has(key) || hasOwnerKey(nested, observed)) return true;
+  }
+  return false;
 }
 
 function rejectOwnerOverride(request) {
@@ -29,6 +34,20 @@ function isLoopbackAddress(value) {
   if (typeof value !== 'string') return false;
   const normalized = value.toLowerCase().split('%', 1)[0];
   return normalized === '127.0.0.1' || normalized === '::1' || normalized === '::ffff:127.0.0.1';
+}
+
+function readCookie(header, name) {
+  if (typeof header !== 'string') return undefined;
+  for (const part of header.split(';')) {
+    const separator = part.indexOf('=');
+    if (separator < 1 || part.slice(0, separator).trim() !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(separator + 1).trim());
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 function createInstallAuthMiddleware({ installTokenService } = {}) {
@@ -65,6 +84,9 @@ function createBrowserAuthMiddleware({ browserSessionService } = {}) {
     Promise.resolve()
       .then(async () => {
         rejectOwnerOverride(request);
+        request.cookies ??= Object.freeze({
+          easy_rewind_session: readCookie(request?.headers?.cookie, 'easy_rewind_session'),
+        });
         const context = await browserSessionService.authenticate({
           csrfToken: request?.headers?.['x-csrf-token'],
           method: request?.method,
@@ -74,6 +96,29 @@ function createBrowserAuthMiddleware({ browserSessionService } = {}) {
         setRequestContext(request, context);
       })
       .then(() => next(), next);
+  };
+}
+
+function createLocalAuthMiddleware({ installTokenService, browserSessionService } = {}) {
+  const install =
+    typeof installTokenService?.authenticate !== 'function'
+      ? undefined
+      : createInstallAuthMiddleware({ installTokenService });
+  const browser =
+    typeof browserSessionService?.authenticate !== 'function'
+      ? undefined
+      : createBrowserAuthMiddleware({ browserSessionService });
+  if (install === undefined && browser === undefined) fail('AUTH_CONFIGURATION_INVALID');
+  return function localAuthMiddleware(request, response, next) {
+    if (typeof request?.headers?.authorization === 'string' && install !== undefined) {
+      install(request, response, next);
+      return;
+    }
+    if (browser !== undefined) {
+      browser(request, response, next);
+      return;
+    }
+    next(Object.assign(new Error('Authentication is required.'), { code: 'AUTH_BEARER_REQUIRED' }));
   };
 }
 
@@ -102,5 +147,6 @@ module.exports = {
   createBrowserAuthMiddleware,
   createDeviceAuthMiddleware,
   createInstallAuthMiddleware,
+  createLocalAuthMiddleware,
   rejectOwnerOverride,
 };

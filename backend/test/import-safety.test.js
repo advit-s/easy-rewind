@@ -20,7 +20,11 @@ function productionModules(directory) {
 }
 
 test('importing every backend production module is inert', () => {
-  const modules = [join(backendRoot, 'server.js'), ...productionModules(join(backendRoot, 'routes'))];
+  const modules = [
+    join(backendRoot, 'server.js'),
+    ...productionModules(join(backendRoot, 'routes')),
+    ...productionModules(join(backendRoot, 'src')),
+  ];
   const helpersPath = join(backendRoot, 'routes', 'helpers.js');
   const result = runImportProbe({
     modules,

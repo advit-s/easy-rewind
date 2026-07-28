@@ -187,13 +187,15 @@ the development-only findings are remediated.
 
 ## Native ABI finding
 
-The real Electron native rebuild is currently failing. The staging script
-writes its generated `package.json` at the staging root but invokes
-`@electron/rebuild` with the staging `node_modules` directory as
-`--module-dir`. A bounded diagnostic copied the generated manifest into that
-module directory and then rebuilt `better-sqlite3` successfully. That
-diagnostic narrows the staging-layout defect; it does not count as the final
-script fix or Electron ABI acceptance evidence.
+The staging-layout implementation now passes its focused `13/13` tests. The
+staging root is the rebuild module directory, contains the generated manifest
+and staged dependency, preserves the shared Node binding, checks the exact
+Electron version, and inspects the staging tree for forbidden artifacts.
+
+The final `npm run verify:native` run also passed against Electron `43.2.0`.
+The Electron-hosted process loaded the staged native module, opened an external
+temporary database, migrated it, wrote and read a safe fixture, checkpointed
+the WAL, closed the database, and removed the temporary staging tree.
 
 ## Task 4 canonical SQLite boundary
 
@@ -383,6 +385,10 @@ secret scanning, history rewriting, and the preserved quarantine are not
 credential revocation. Release remains blocked until provider-side revocation
 is confirmed through an authorized external record.
 
+The quarantine is sensitive recovery material, not secure credential storage.
+No key value, partial key, replacement key, provider response, or credential
+fingerprint belongs in this evidence directory.
+
 ## Requirement status vocabulary
 
 - `not-started`: implementation work has not begun.
@@ -391,9 +397,41 @@ is confirmed through an authorized external record.
 - `verified`: the required executable or authorized manual evidence passes.
 - `blocked`: an identified external dependency or authority remains unresolved.
 
-## Baseline decision
+## Stage 2 exit-gate working record
 
-Stage 2 is open. The requirements ledger records unimplemented work as
-`not-started`, the native ABI defect as `failing`, and external credential
-revocation as `blocked`. Later tasks must replace those states only with
-matching executable or authorized manual evidence.
+The frozen public contract remains byte-stable:
+
+- Schema bundle SHA-256:
+  `9c5292808862a88cb1035f6431456e5776442de0086e321769e1b892a815d145`
+- OpenAPI SHA-256:
+  `c58423ce97f8f2960ccc11e7d2fd828b3360a114ca01861a4c7fce17fbceb450`
+
+The deterministic generator `--check` and `--hash` commands both passed under
+the pinned Node `24.18.0` runtime. The compatibility and frozen-contract HTTP
+route run passed `17/17`; the integrated backend suite passed `340/340`; the
+migration/schema/legacy gate passed `109/109`; and the lifecycle/import-safety
+gate passed `16/16`, all with zero skips. The real Electron native smoke,
+Windows DPAPI/ACL smoke, secret scan, Git-aware hygiene, lint, formatting, and
+offline production audit also passed.
+
+Evidence structure:
+
+- [commands.md](commands.md) records safe command classifications and counts.
+- [traceability.md](traceability.md) links every S2 requirement to evidence.
+- [recovery.md](recovery.md) defines backup-first migration and rollback.
+- [command-evidence.schema.json](command-evidence.schema.json) defines the
+  redacted machine-readable command-evidence envelope.
+
+The schema forbids arbitrary extra fields and raw output retention. Command
+evidence must omit personal paths, credentials, database rows, hostnames,
+device identifiers, private URLs, and quarantine hashes.
+
+## Current exit decision
+
+**FAIL / BLOCKED.** Local implementation, migration/rollback, composition,
+native ABI, Windows protection, hygiene, audit, and recovery checks pass. The
+online clean-install aggregate remains blocked because sending dependency and
+lockfile metadata to the npm registry was not separately authorized. The
+integration commit is still pending. Gemini provider revocation remains
+separately `blocked` and will continue to block release until externally
+confirmed.

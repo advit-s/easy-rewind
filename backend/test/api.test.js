@@ -2,7 +2,7 @@ const assert = require('node:assert/strict');
 const { afterEach, beforeEach, describe, test } = require('node:test');
 const supertest = require('supertest');
 const { closeDb, resetRuntimeState } = require('../routes/helpers');
-const { createApp } = require('../server');
+const { createApp } = require('../legacy-server');
 const { createTestEnvironment } = require('./support/test-environment');
 const { startTestServer } = require('./support/test-server');
 

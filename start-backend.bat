@@ -22,9 +22,11 @@ if not exist "node_modules" (
 )
 
 echo [Server] Starting the Easy Rewind standalone backend...
+echo [Server] Protected secret-store and restrictive file-permission adapters are required.
 echo [Server] Press Ctrl+C to stop.
 echo.
 
+set "EASY_REWIND_STORAGE_ROOT=%LOCALAPPDATA%\EasyRewind\backend"
 node server.js
 
 if errorlevel 1 (

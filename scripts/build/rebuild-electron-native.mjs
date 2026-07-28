@@ -20,6 +20,9 @@ const nativePackageName = 'better-sqlite3';
 const repositoryRoot = resolve(import.meta.dirname, '..', '..');
 const sharedNodeModules = join(repositoryRoot, 'node_modules');
 const sharedNativeModule = join(sharedNodeModules, nativePackageName);
+const electronPackageRoot = join(sharedNodeModules, 'electron');
+const electronExecutable = join(electronPackageRoot, 'dist', 'electron.exe');
+const verificationScript = join(import.meta.dirname, 'verify-electron-native.mjs');
 
 class StagingError extends Error {}
 
@@ -132,13 +135,34 @@ database.close();`,
   return verification.status === 0 && !verification.error && !verification.signal;
 }
 
+function verifyPinnedElectronInstallation() {
+  const electronManifest = JSON.parse(readFileSync(join(electronPackageRoot, 'package.json'), 'utf8'));
+  const executableMetadata = lstatSync(electronExecutable);
+  const verificationMetadata = lstatSync(verificationScript);
+  if (
+    electronManifest.name !== 'electron' ||
+    electronManifest.version !== electronVersion ||
+    !executableMetadata.isFile() ||
+    executableMetadata.isSymbolicLink() ||
+    !verificationMetadata.isFile() ||
+    verificationMetadata.isSymbolicLink()
+  ) {
+    throw new StagingError();
+  }
+}
+
 function main() {
   let stagingRoot;
   let failed = false;
+  let failureDetail = '';
+  let stage = 'installation-check';
   try {
+    verifyPinnedElectronInstallation();
+    stage = 'shared-binding-check';
     const originalBefore = bindingSnapshot(sharedNativeModule);
     if (!verifyNodeLoad(sharedNativeModule)) throw new StagingError();
 
+    stage = 'staging-copy';
     stagingRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-electron-native-'));
     const stagingNodeModules = join(stagingRoot, 'node_modules');
     mkdirSync(stagingNodeModules);
@@ -158,7 +182,8 @@ function main() {
     );
 
     const stagedModule = packageDirectory(stagingNodeModules, nativePackageName);
-    const stagedBefore = bindingSnapshot(stagedModule);
+    bindingSnapshot(stagedModule);
+    stage = 'electron-rebuild';
     const rebuildCli = join(sharedNodeModules, '@electron', 'rebuild', 'lib', 'cli.js');
     const rebuild = spawnSync(
       process.execPath,
@@ -167,7 +192,7 @@ function main() {
         '--version',
         electronVersion,
         '--module-dir',
-        stagingNodeModules,
+        stagingRoot,
         '--which-module',
         nativePackageName,
         '--force',
@@ -182,37 +207,40 @@ function main() {
     );
 
     const originalAfter = bindingSnapshot(sharedNativeModule);
+    stage = 'shared-binding-preservation';
     if (!snapshotsEqual(originalBefore, originalAfter) || !verifyNodeLoad(sharedNativeModule)) {
       throw new StagingError();
     }
-    if (rebuild.status !== 0 || rebuild.error || rebuild.signal) throw new StagingError();
-    const stagedAfter = bindingSnapshot(stagedModule);
-    if (snapshotsEqual(stagedBefore, stagedAfter)) throw new StagingError();
-
-    const electronExecutable = join(sharedNodeModules, 'electron', 'dist', 'electron.exe');
-    let electronVerified = false;
-    try {
-      electronVerified =
-        lstatSync(electronExecutable).isFile() &&
-        verifyNodeLoad(stagedModule, electronExecutable, {
-          ...process.env,
-          ELECTRON_RUN_AS_NODE: '1',
-        });
-    } catch {
-      electronVerified = false;
+    if (rebuild.status !== 0 || rebuild.error || rebuild.signal) {
+      failureDetail = [rebuild.error?.message, rebuild.signal ? `signal: ${rebuild.signal}` : '', rebuild.stderr]
+        .filter(Boolean)
+        .join('\n');
+      throw new StagingError();
     }
-    if (lstatSync(electronExecutable, { throwIfNoEntry: false }) && !electronVerified) {
+    stage = 'rebuilt-binding-check';
+    bindingSnapshot(stagedModule);
+
+    stage = 'electron-runtime-smoke';
+    const electronVerification = spawnSync(
+      electronExecutable,
+      [verificationScript, stagingRoot, repositoryRoot, electronVersion],
+      {
+        cwd: stagingRoot,
+        encoding: 'utf8',
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+        timeout: 120_000,
+        windowsHide: true,
+      }
+    );
+    if (electronVerification.status !== 0 || electronVerification.error || electronVerification.signal) {
       throw new StagingError();
     }
 
-    process.stdout.write(
-      electronVerified
-        ? 'Electron native staging rebuild passed with Electron runtime verification.\n'
-        : 'Electron native staging rebuild passed; Electron executable unavailable, runtime verification deferred to Stage 6.\n'
-    );
+    process.stdout.write('Electron native staging rebuild passed with Electron runtime verification.\n');
   } catch {
     failed = true;
-    process.stderr.write('Electron native staging rebuild failed.\n');
+    process.stderr.write(`Electron native staging rebuild failed.\nStage: ${stage}\n`);
+    if (failureDetail) process.stderr.write(`${failureDetail.trim()}\n`);
   } finally {
     if (stagingRoot) {
       try {

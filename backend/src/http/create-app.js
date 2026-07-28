@@ -3,6 +3,34 @@
 const { randomUUID } = require('node:crypto');
 const { createHttpError, errorHandler } = require('./error-handler');
 const { createHealthRouter } = require('./health-routes');
+const { createCompatibilityRouter } = require('../routes/compatibility-routes');
+const { createContractRouter } = require('../routes/contract-routes');
+
+function isLoopbackOrigin(value) {
+  if (typeof value !== 'string' || value.length > 256) return false;
+  let origin;
+  try {
+    origin = new URL(value);
+  } catch {
+    return false;
+  }
+  return (
+    ['http:', 'https:'].includes(origin.protocol) &&
+    ['127.0.0.1', 'localhost', '[::1]'].includes(origin.hostname.toLowerCase()) &&
+    origin.username === '' &&
+    origin.password === '' &&
+    origin.pathname === '/' &&
+    origin.search === '' &&
+    origin.hash === '' &&
+    origin.origin === value
+  );
+}
+
+function hasRequestBody(request) {
+  if (request.headers['transfer-encoding'] !== undefined) return true;
+  const contentLength = request.headers['content-length'];
+  return typeof contentLength === 'string' && /^\d+$/.test(contentLength) && Number(contentLength) > 0;
+}
 
 function createApp({
   health,
@@ -10,12 +38,15 @@ function createApp({
   routes = [],
   jsonLimit = '100kb',
   closeHandlers = [],
+  routeDependencies = {},
 } = {}) {
   if (
     typeof health !== 'function' ||
     typeof generateRequestId !== 'function' ||
     !Array.isArray(routes) ||
-    !Array.isArray(closeHandlers)
+    !Array.isArray(closeHandlers) ||
+    routeDependencies === null ||
+    typeof routeDependencies !== 'object'
   ) {
     throw new TypeError('HTTP application dependencies are invalid');
   }
@@ -40,10 +71,36 @@ function createApp({
     response.setHeader('X-Frame-Options', 'DENY');
     response.setHeader('Referrer-Policy', 'no-referrer');
     response.setHeader('Cache-Control', 'no-store');
+    const origin = request.headers.origin;
+    if (origin !== undefined) {
+      if (!isLoopbackOrigin(origin)) {
+        next(createHttpError('forbidden'));
+        return;
+      }
+      response.setHeader('Access-Control-Allow-Origin', origin);
+      response.setHeader('Access-Control-Allow-Credentials', 'true');
+      response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, X-CSRF-Token');
+      response.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PATCH, PUT, DELETE, OPTIONS');
+      response.setHeader('Vary', 'Origin');
+    }
+    if (request.method === 'OPTIONS') {
+      response.status(204).end();
+      return;
+    }
+    if (
+      ['POST', 'PATCH', 'PUT'].includes(request.method) &&
+      hasRequestBody(request) &&
+      !request.is('application/json')
+    ) {
+      next(createHttpError('validation_failed', 415));
+      return;
+    }
     next();
   });
   app.use(express.json({ limit: jsonLimit, strict: true, type: 'application/json' }));
   app.use(createHealthRouter({ health }));
+  app.use(createContractRouter(routeDependencies));
+  app.use('/api', createCompatibilityRouter({ health, ...routeDependencies }));
   for (const route of routes) {
     if (
       route === null ||
@@ -56,7 +113,11 @@ function createApp({
     app.use(route.path, route.router);
   }
   app.use((request, _response, next) => {
-    next(createHttpError('not_found', 404));
+    next(
+      /^\/v[2-9][0-9]*(?:\/|$)/.test(request.path)
+        ? createHttpError('api_version_unsupported')
+        : createHttpError('not_found', 404)
+    );
   });
   app.use(errorHandler);
 

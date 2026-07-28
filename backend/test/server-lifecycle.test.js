@@ -4,7 +4,7 @@ const net = require('node:net');
 const test = require('node:test');
 
 const { closeDb, getDb, resetGenAI } = require('../routes/helpers');
-const { createApp, startServer } = require('../server');
+const { createApp, startServer } = require('../legacy-server');
 const { createTestEnvironment } = require('./support/test-environment');
 
 const runtimeEnvironmentKeys = [
