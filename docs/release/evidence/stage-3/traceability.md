@@ -2,15 +2,15 @@
 
 | Requirement | Current state | Evidence boundary                                                                                                             |
 | ----------- | ------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| S3-01       | `not-started` | Owner-scoped interactions and memory-score schema is frozen; domain repositories and services are pending                     |
-| S3-02       | `not-started` | Job lease and idempotency schema is frozen; runner behavior is pending                                                        |
-| S3-03       | `not-started` | Required owner-matched delivery devices and per-device/channel idempotency are frozen; service and worker behavior is pending |
-| S3-04       | `not-started` | Remote acquisition implementation and tests are pending                                                                       |
-| S3-05       | `not-started` | Protected provider-configuration metadata schema is frozen; AI and research services are pending                              |
-| S3-06       | `not-started` | Import/export run metadata schema is frozen; bundle and recovery behavior is pending                                          |
-| S3-07       | `not-started` | Device sequence, acknowledgement, snapshot, tombstone, and resolution schema is frozen; convergence behavior is pending       |
-| S3-08       | `not-started` | Runtime device-revocation enforcement is pending                                                                              |
-| S3-09       | `not-started` | Disabled-by-default mutually authenticated LAN gateway is pending                                                             |
+| S3-01       | `verified`    | Owner-scoped revisioned content, graph, learning, and settings services record canonical sync changes in the same transaction |
+| S3-02       | `verified`    | Durable job lease, heartbeat, retry, cancellation, idempotency, and restart-recovery tests pass                               |
+| S3-03       | `verified`    | Reminder state, retry exhaustion, restart recovery, and distinct per-device acknowledgement tests pass                        |
+| S3-04       | `verified`    | DNS, address, redirect, timeout, compression, byte, content-type, and HTML sanitization tests pass                            |
+| S3-05       | `verified`    | Profile-isolated protected provider configuration and truthful AI/research state tests pass                                   |
+| S3-06       | `verified`    | Checksummed secret-free bundles, dry run, backup-first import, rollback, and protected artifact tests pass                    |
+| S3-07       | `verified`    | Idempotent monotonic sync, conflict preservation, tombstones, snapshots, and replica convergence tests pass                   |
+| S3-08       | `verified`    | Revoked device rejection is exercised through sync and LAN authentication                                                     |
+| S3-09       | `verified`    | Disabled-default behavior and the bounded TLS private-subnet gateway pass focused tests                                       |
 
-Task 1 evidence is intentionally narrower than every end-to-end requirement.
-No row is promoted merely because its supporting schema now exists.
+The external provider-key revocation and online clean-install checks remain
+separate Stage 2 release blockers and are not promoted by these results.

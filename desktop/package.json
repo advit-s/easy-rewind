@@ -2,8 +2,9 @@
   "name": "easy-rewind-desktop",
   "version": "2.0.0",
   "private": true,
+  "productName": "Easy Rewind",
   "description": "Easy Rewind Windows tray and overlay lifecycle adapter",
-  "main": "main.js",
+  "main": "bootstrap.js",
   "engines": {
     "node": ">=24.18.0 <25",
     "npm": ">=11.6.2 <12"
@@ -13,11 +14,20 @@
     "dev": "electron . --dev",
     "install:electron": "node ../node_modules/electron/install.js",
     "rebuild:native": "node ../scripts/build/rebuild-electron-native.mjs",
+    "validate:native": "npm run install:electron && node ../scripts/build/rebuild-electron-native.mjs --validate-only",
+    "validate:package": "node ../scripts/validation/validate-desktop-package.mjs",
     "verify:native": "npm run install:electron && node --test ../scripts/build/rebuild-electron-native.test.mjs && npm run rebuild:native",
-    "build": "npm run rebuild:native && electron-builder --win --config build.config.json"
+    "build": "npm run validate:package && npm run rebuild:native && electron-builder --win --config build.config.json"
   },
   "dependencies": {
-    "better-sqlite3": "13.0.1"
+    "@google/generative-ai": "0.24.1",
+    "axios": "1.18.1",
+    "better-sqlite3": "13.0.1",
+    "cors": "2.8.6",
+    "dotenv": "16.6.1",
+    "express": "4.22.2",
+    "express-rate-limit": "7.5.1",
+    "nodemailer": "9.0.3"
   },
   "devDependencies": {
     "@electron/rebuild": "4.2.0",

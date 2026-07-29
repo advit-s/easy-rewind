@@ -1,4 +1,8 @@
 node_modules
+.expo
+**/.expo
+.expo-*
+**/.expo-*
 dist
 build
 !scripts/build

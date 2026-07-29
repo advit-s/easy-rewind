@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import test from 'node:test';
 import {
   parseCsv,
@@ -95,11 +95,19 @@ function withRequirementsFixture(callback) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-stage2-requirements-'));
 
   try {
-    for (const stage of ['2', '3']) {
+    const currentRows = parseRequirementRows(requirementsText);
+    for (const row of currentRows) {
+      const evidencePath = join(fixtureRoot, ...row.evidence_path.split('/'));
+      mkdirSync(dirname(evidencePath), { recursive: true });
+      if (!existsSync(evidencePath)) writeFileSync(evidencePath, '# Fixture\n', 'utf8');
+    }
+    for (const stage of new Set(currentRows.map(row => row.stage))) {
       const evidenceRoot = join(fixtureRoot, 'docs', 'release', 'evidence', `stage-${stage}`);
       mkdirSync(evidenceRoot, { recursive: true });
-      writeFileSync(join(evidenceRoot, 'README.md'), '# Fixture\n', 'utf8');
-      writeFileSync(join(evidenceRoot, 'commands.md'), '# Fixture\n', 'utf8');
+      for (const name of ['README.md', 'commands.md']) {
+        const fixturePath = join(evidenceRoot, name);
+        if (!existsSync(fixturePath)) writeFileSync(fixturePath, '# Fixture\n', 'utf8');
+      }
     }
     return callback(fixtureRoot);
   } finally {

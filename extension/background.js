@@ -1,735 +1,358 @@
-/**
- * easy-rewind Knowledge Assistant — background.js (Service Worker)
- *
- * Handles:
- * - Extension installation & user ID generation
- * - Context menu (right-click → lookup)
- * - Tab-close reminder detection
- * - Alarm-based reminder checking
- * - Desktop notifications for due reminders
- * - Quick note capture via keyboard shortcut
- * - Smart Auto-Capture engagement tracking
- */
+import { createApiClient } from './src/api-client.js';
+import { validateExtensionMessage } from './src/message-contracts.js';
+import { createSessionAuthorizationStore } from './src/session-authorization.js';
+import { createExtensionStateStore } from './src/state-store.js';
 
-// ─────────────────────────────────────────────
-// CONSTANTS
-// ─────────────────────────────────────────────
-const DEFAULT_API_BASE = 'http://localhost:5000';
-const REMINDER_CHECK_INTERVAL = 2; // minutes
+const DEFAULT_API_BASE = 'http://127.0.0.1:3210';
+const SYNC_ALARM = 'easy-rewind-sync';
+const HEALTH_ALARM = 'easy-rewind-health';
+const MAX_NOTIFICATION_TEXT = 160;
 
-// In-memory store of prompted tab IDs to avoid re-notification after
-// service-worker restart. On start we first check chrome.storage.session
-// for surviving engagement state.
-let promptedTabs = new Set();
-let suppressedTabs = new Set();
+const CONTEXT_MENUS = Object.freeze([
+  Object.freeze({
+    id: 'easy-rewind-capture-page',
+    title: 'Save page to Easy Rewind',
+    contexts: ['page'],
+  }),
+  Object.freeze({
+    id: 'easy-rewind-capture-selection',
+    title: 'Save selection to Easy Rewind',
+    contexts: ['selection'],
+  }),
+]);
 
-function getApiUrl(path) {
-  return new Promise((resolve) => {
-    chrome.storage.local.get({ easy_rewind_api_base: DEFAULT_API_BASE }, (result) => {
-      const base = result.easy_rewind_api_base || DEFAULT_API_BASE;
-      resolve(base.replace(/\/+$/, '') + '/api' + path);
-    });
+function clone(value) {
+  return structuredClone(value);
+}
+
+function safeError(result) {
+  const candidate =
+    typeof result?.error === 'string'
+      ? result.error
+      : typeof result?.error?.code === 'string'
+        ? result.error.code
+        : null;
+  return candidate && candidate.length <= 128 ? candidate : 'request_failed';
+}
+
+function mapConnectionStatus(result) {
+  const allowed = new Set(['ready', 'offline', 'authentication_required', 'conflict', 'incompatible', 'failed']);
+  return allowed.has(result?.state) ? result.state : 'failed';
+}
+
+function responseFor(result) {
+  if (result?.state === 'ready') {
+    return Object.freeze({ ok: true, state: 'ready', data: result.data ?? null });
+  }
+  return Object.freeze({
+    ok: false,
+    state: mapConnectionStatus(result),
+    error: safeError(result),
   });
 }
 
-// ─────────────────────────────────────────────
-// SERVER HEALTH BADGE
-// ─────────────────────────────────────────────
-
-async function updateServerBadge() {
-  try {
-    const { easy_rewind_api_base } = await chrome.storage.local.get('easy_rewind_api_base');
-    const base = (easy_rewind_api_base || 'http://localhost:5000').replace(/\/+$/, '');
-    const response = await fetch(`${base}/api/health`);
-    if (response.ok) {
-      await chrome.action.setBadgeText({ text: '' });
-    } else {
-      throw new Error('Unhealthy');
-    }
-  } catch {
-    await chrome.action.setBadgeText({ text: '!!' });
-    await chrome.action.setBadgeBackgroundColor({ color: '#ef4444' });
+function validateDependencies({ chromeApi, apiClient, authorizationStore, stateStore, now }) {
+  if (!chromeApi?.runtime?.onMessage?.addListener || !chromeApi?.contextMenus?.create || !chromeApi?.alarms?.create) {
+    throw new TypeError('chromeApi is missing required extension APIs.');
   }
-}
-
-// ─────────────────────────────────────────────
-// SYNC TRACKER
-// ─────────────────────────────────────────────
-
-async function updateLastSyncTime() {
-  try {
-    const now = new Date().toISOString();
-    await chrome.storage.local.set({ easy_rewind_last_sync: now });
-  } catch (_) {}
-}
-
-async function syncItems() {
-  try {
-    const { easy_rewind_last_sync, easy_rewind_user_id, easy_rewind_api_base } =
-      await chrome.storage.local.get(['easy_rewind_last_sync', 'easy_rewind_user_id', 'easy_rewind_api_base']);
-    if (!easy_rewind_user_id) return;
-
-    const base = (easy_rewind_api_base || 'http://localhost:5000').replace(/\/+$/, '');
-    const since = easy_rewind_last_sync ? `?since=${encodeURIComponent(easy_rewind_last_sync)}` : '?limit=10';
-    const url = `${base}/api/items${since}`;
-
-    const response = await fetch(url, {
-      headers: { 'x-user-id': easy_rewind_user_id },
-    });
-    if (!response.ok) return;
-    const data = await response.json();
-
-    if (data.items && data.items.length > 0) {
-      const lastCount = (await chrome.storage.local.get('easy_rewind_new_items')).easy_rewind_new_items || 0;
-      await chrome.storage.local.set({ easy_rewind_new_items: lastCount + data.items.length });
-      updateLastSyncTime();
-    }
-  } catch (_) {}
-}
-
-// ─────────────────────────────────────────────
-// SMART AUTO-CAPTURE — Engagement Tracking
-// ─────────────────────────────────────────────
-
-/**
- * Per-tab engagement state kept in memory.
- * Survives service-worker restarts poorly, but
- * content.js re-sends heartbeats every 15s, so
- * state is re-established quickly.
- */
-const engagementState = new Map(); // tabId → { engagement, lastHeartbeat, prompted, suppressed }
-
-// Engagement thresholds (can be overridden via chrome.storage)
-let autoCaptureSettings = {
-  enabled: true,
-  minMinutes: 5,
-  minScrollPct: 80,
-  scoreThreshold: 65,          // composite score 0-100
-  promptDelayMs: 120000,       // wait 2 min after threshold before prompting (anti-flash)
-};
-
-// Load auto-capture settings
-async function loadAutoCaptureSettings() {
-  try {
-    const result = await chrome.storage.local.get('easy_rewind_auto_capture');
-    if (result.easy_rewind_auto_capture) {
-      autoCaptureSettings = { ...autoCaptureSettings, ...result.easy_rewind_auto_capture };
-    }
-  } catch (_) {}
-}
-
-// Persist prompted/suppressed state across service-worker restarts
-async function persistEngagementState() {
-  try {
-    await chrome.storage.session.set({
-      easy_rewind_prompted_tabs: [...promptedTabs],
-      easy_rewind_suppressed_tabs: [...suppressedTabs],
-    });
-  } catch (_) {}
-}
-
-async function restoreEngagementState() {
-  try {
-    const result = await chrome.storage.session.get(['easy_rewind_prompted_tabs', 'easy_rewind_suppressed_tabs']);
-    if (result.easy_rewind_prompted_tabs) promptedTabs = new Set(result.easy_rewind_prompted_tabs);
-    if (result.easy_rewind_suppressed_tabs) suppressedTabs = new Set(result.easy_rewind_suppressed_tabs);
-  } catch (_) {}
-}
-
-// Handle engagement heartbeats from content scripts
-function handleEngagementUpdate(tabId, data) {
-  if (!autoCaptureSettings.enabled) return;
-
-  const now = Date.now();
-  const existing = engagementState.get(tabId) || { prompted: false, suppressed: false, notified: false, lastHeartbeat: 0 };
-  existing.lastHeartbeat = now;
-  existing.engagement = data;
-  engagementState.set(tabId, existing);
-
-  // Don't re-prompt or re-notify if already done (checks both in-memory and persisted set)
-  if (existing.prompted || existing.suppressed || promptedTabs.has(tabId) || suppressedTabs.has(tabId)) return;
-
-  // Check threshold
-  // If promptDelayMs is set, only prompt after the user has been engaged for at least that long
-  // past the threshold crossing
-  if (data.score >= autoCaptureSettings.scoreThreshold && data.elapsed_min >= autoCaptureSettings.minMinutes) {
-    existing.prompted = true;
-    existing.promptedAt = now;
-    engagementState.set(tabId, existing);
-    promptedTabs.add(tabId);
-    persistEngagementState();
-    fireAutoCapturePrompt(tabId, data);
+  if (
+    !apiClient ||
+    typeof apiClient.health !== 'function' ||
+    typeof apiClient.pull !== 'function' ||
+    typeof apiClient.request !== 'function'
+  ) {
+    throw new TypeError('apiClient is invalid.');
   }
+  if (!stateStore || typeof stateStore.load !== 'function' || typeof stateStore.save !== 'function') {
+    throw new TypeError('stateStore is invalid.');
+  }
+  if (
+    !authorizationStore ||
+    typeof authorizationStore.clear !== 'function' ||
+    typeof authorizationStore.set !== 'function'
+  ) {
+    throw new TypeError('authorizationStore is invalid.');
+  }
+  if (typeof now !== 'function') throw new TypeError('now must be a function.');
 }
 
-// Fire a notification when engagement threshold is crossed
-async function fireAutoCapturePrompt(tabId, engagement) {
-  try {
-    // Get tab info
-    const tab = await chrome.tabs.get(tabId).catch(() => null);
-    if (!tab) return;
+export function createBackgroundController({ chromeApi, apiClient, authorizationStore, stateStore, now }) {
+  validateDependencies({ chromeApi, apiClient, authorizationStore, stateStore, now });
 
-    // Don't prompt on certain URLs
-    const skipDomains = ['chrome://', 'chrome-extension://', 'about:', 'file://', 'localhost', '127.0.0.1'];
-    if (skipDomains.some(p => tab.url?.startsWith(p))) return;
+  let initialization;
+  let state;
 
-    // Store the pending save data so popup can pick it up
-    const pendingData = {
-      url: tab.url || '',
-      title: tab.title || 'Untitled Page',
-      engagement: engagement,
-      triggered_at: new Date().toISOString(),
-    };
+  function timestamp() {
+    const value = now();
+    if (!Number.isSafeInteger(value) || value < 0) throw new TypeError('Invalid clock value.');
+    return value;
+  }
 
-    await chrome.storage.local.set({
-      easy_rewind_pending_auto_save: pendingData,
+  async function persist(mutator) {
+    const next = clone(state);
+    mutator(next);
+    state = await stateStore.save(next);
+    return state;
+  }
+
+  async function setConnection(result) {
+    await persist(next => {
+      next.connection = {
+        status: mapConnectionStatus(result),
+        updatedAt: timestamp(),
+      };
     });
+  }
 
-    // Create the notification
-    const minutes = Math.round(engagement.elapsed_min);
-    const depth = engagement.max_scroll_depth;
-    const notifId = `auto-capture-${tabId}-${Date.now()}`;
+  function getPrivacySnapshot() {
+    if (!state) throw new Error('Background is not initialized.');
+    return Object.freeze({
+      captureEnabled: state.capture.enabled,
+      allowedHosts: [...state.privacy.allowedHosts],
+      blockedHosts: [...state.privacy.blockedHosts],
+      minimumDwellMs: state.privacy.minimumDwellMs,
+      minimumSelectionLength: state.privacy.minimumSelectionLength,
+    });
+  }
 
-    chrome.notifications.create(notifId, {
+  async function broadcastPrivacy() {
+    if (typeof chromeApi.tabs?.query !== 'function' || typeof chromeApi.tabs?.sendMessage !== 'function') return;
+    const validation = validateExtensionMessage({
+      type: 'PRIVACY_CHANGED',
+      payload: getPrivacySnapshot(),
+    });
+    if (!validation.valid) return;
+    const tabs = await chromeApi.tabs.query({});
+    await Promise.all(
+      tabs
+        .filter(tab => Number.isSafeInteger(tab?.id))
+        .map(tab => chromeApi.tabs.sendMessage(tab.id, validation.message).catch(() => undefined))
+    );
+  }
+
+  async function getPageSnapshot() {
+    if (typeof chromeApi.tabs?.query !== 'function') {
+      return Object.freeze({ ok: true, state: 'empty', page: null });
+    }
+    const [tab] = await chromeApi.tabs.query({ active: true, currentWindow: true });
+    if (!tab || typeof tab.url !== 'string' || typeof tab.title !== 'string' || !/^https?:\/\//i.test(tab.url)) {
+      return Object.freeze({ ok: true, state: 'empty', page: null });
+    }
+    return Object.freeze({
+      ok: true,
+      state: 'ready',
+      page: Object.freeze({
+        url: tab.url.slice(0, 2048),
+        title: tab.title.slice(0, 512),
+      }),
+    });
+  }
+
+  async function notifyResult(kind, result) {
+    if (typeof chromeApi.notifications?.create !== 'function') return;
+    const ready = result?.state === 'ready';
+    const title = ready ? 'Saved to Easy Rewind' : 'Easy Rewind needs attention';
+    const rawMessage = ready
+      ? kind === 'selection'
+        ? 'Selection saved.'
+        : 'Page saved.'
+      : mapConnectionStatus(result).replaceAll('_', ' ');
+    await chromeApi.notifications.create(`easy-rewind-${timestamp()}`, {
       type: 'basic',
       iconUrl: 'icons/icon128.png',
-      title: '🧠 Save this to memory?',
-      message: `You spent ${minutes} min reading "${tab.title?.slice(0, 60) || 'this page'}" — scrolled ${depth}%.`,
-      priority: 2,
-      buttons: [
-        { title: '💾 Save to Memory' },
-        { title: '✕ Not Now' },
-      ],
-      requireInteraction: true,
-      contextMessage: 'easy-rewind auto-capture',
-    });
-
-    console.log(`[Auto-Capture] Prompt for tab ${tabId}: "${tab.title}" (${minutes}min, ${depth}% scroll)`);
-  } catch (err) {
-    console.warn('[Auto-Capture] Failed to prompt:', err.message);
-  }
-}
-
-// Handle notification button clicks for auto-capture
-async function handleAutoCaptureNotification(notificationId, buttonIndex) {
-  // notificationId format: auto-capture-{tabId}-{timestamp}
-  const parts = notificationId.split('-');
-  if (parts.length < 3 || parts[0] !== 'auto' || parts[1] !== 'capture') return false;
-
-  const tabId = parseInt(parts[2]);
-  const state = engagementState.get(tabId);
-
-  if (buttonIndex === 0) {
-    // 💾 Save to Memory
-    // Open popup — it will read easy_rewind_pending_auto_save and auto-save
-    await chrome.storage.local.set({ easy_rewind_open_tab: 'save' });
-    chrome.action.openPopup();
-  } else if (buttonIndex === 1) {
-    // ✕ Not Now — suppress further prompts for this tab
-    if (state) {
-      state.suppressed = true;
-      engagementState.set(tabId, state);
-    }
-    suppressedTabs.add(tabId);
-    persistEngagementState();
-    // Also clear the pending data
-    await chrome.storage.local.remove('easy_rewind_pending_auto_save');
-  }
-
-  return true; // handled
-}
-
-// Check engagement states periodically for cleanup (stale tabs)
-function cleanEngagementState() {
-  const staleCutoff = Date.now() - 30 * 60 * 1000; // 30 min
-  for (const [tabId, state] of engagementState.entries()) {
-    if (state.lastHeartbeat < staleCutoff) {
-      engagementState.delete(tabId);
-    }
-  }
-}
-
-// ─────────────────────────────────────────────
-// INSTALLATION
-// ─────────────────────────────────────────────
-chrome.runtime.onInstalled.addListener(async (details) => {
-  if (details.reason === 'install') {
-    const clientId = 'user_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    await chrome.storage.local.set({
-      easy_rewind_user_id: clientId,
-      easy_rewind_installed_at: new Date().toISOString(),
-    });
-    // Try to get a canonical shared user ID from the server
-    chrome.storage.local.get({ easy_rewind_api_base: DEFAULT_API_BASE }, (result) => {
-      const base = (result.easy_rewind_api_base || DEFAULT_API_BASE).replace(/\/+$/, '');
-      fetch(`${base}/api/session`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ client_id: clientId, client_type: 'extension' }),
-      }).then(r => r.json()).then(session => {
-        if (session.user_id && session.user_id !== clientId) {
-          chrome.storage.local.set({ easy_rewind_user_id: session.user_id });
-        }
-      }).catch(() => {});
+      title,
+      message: rawMessage.slice(0, MAX_NOTIFICATION_TEXT),
     });
   }
 
-  if (details.reason === 'install' || details.reason === 'update') {
-    // Create context menu
-    chrome.contextMenus.create({
-      id: 'easy-rewind-lookup',
-      title: '🔍 Look up "%s" in easy-rewind',
-      contexts: ['selection'],
-    });
-
-    chrome.contextMenus.create({
-      id: 'easy-rewind-save-note',
-      title: '📝 Save selection as quick note',
-      contexts: ['selection'],
-    });
-
-    chrome.contextMenus.create({
-      id: 'easy-rewind-bookmark-page',
-      title: '🔖 Bookmark this page in easy-rewind',
-      contexts: ['page'],
-    });
-
-    chrome.contextMenus.create({
-      id: 'easy-rewind-highlight',
-      title: '🖍 Save highlight to easy-rewind',
-      contexts: ['selection'],
-    });
-
-    // Set up periodic reminder check
-    chrome.alarms.create('check-reminders', {
-      periodInMinutes: REMINDER_CHECK_INTERVAL,
-    });
-
-    // Set up server health check badge
-    chrome.alarms.create('check-server-health', {
-      periodInMinutes: 2,
-    });
+  async function checkConnection() {
+    const result = await apiClient.health();
+    await setConnection(result);
+    return responseFor(result);
   }
 
-  // Load auto-capture settings on install/update
-  await loadAutoCaptureSettings();
-});
-
-// ─────────────────────────────────────────────
-// CONTEXT MENU HANDLER
-// ─────────────────────────────────────────────
-chrome.contextMenus.onClicked.addListener((info, tab) => {
-  if (info.menuItemId === 'easy-rewind-lookup') {
-    const selectedText = info.selectionText?.trim();
-    if (selectedText) {
-      chrome.storage.local.set({ easy_rewind_pending_lookup: selectedText });
-      chrome.action.openPopup();
-    }
+  async function retrySync() {
+    const result = await apiClient.pull({ cursor: state.sync.cursor });
+    await persist(next => {
+      next.connection = {
+        status: mapConnectionStatus(result),
+        updatedAt: timestamp(),
+      };
+      if (result?.state === 'ready' && typeof result.data?.cursor === 'string') {
+        next.sync = {
+          cursor: result.data.cursor,
+          updatedAt: timestamp(),
+        };
+      }
+    });
+    return responseFor(result);
   }
 
-  if (info.menuItemId === 'easy-rewind-save-note') {
-    const selectedText = info.selectionText?.trim();
-    if (selectedText && tab) {
-      chrome.storage.local.set({
-        easy_rewind_pending_note: {
-          content: selectedText,
-          source_url: tab.url,
-          source_title: tab.title,
-        }
-      });
-      chrome.action.openPopup();
-    }
-  }
-
-  if (info.menuItemId === 'easy-rewind-bookmark-page') {
-    if (tab) {
-      chrome.storage.local.set({
-        easy_rewind_pending_bookmark: {
-          url: tab.url,
-          title: tab.title,
-        }
-      });
-      chrome.action.openPopup();
-    }
-  }
-
-  if (info.menuItemId === 'easy-rewind-highlight') {
-    if (tab?.id) {
-      chrome.tabs.sendMessage(tab.id, { type: 'HIGHLIGHT_TEXT' }, async (response) => {
-        if (chrome.runtime.lastError || !response || response.error) {
-          const highlightData = {
-            text: info.selectionText?.trim() || '',
-            url: tab.url,
-            page_title: tab.title || '',
-            context: '',
-            color: 'yellow',
-          };
-          if (highlightData.text) {
-            await saveHighlight(highlightData);
-            await updateLastSyncTime();
-            chrome.notifications.create({
-              type: 'basic',
-              iconUrl: 'icons/icon128.png',
-              title: '🖍 Highlight Saved',
-              message: `"${highlightData.text.slice(0, 80)}..."`,
-              priority: 1,
-            });
-          }
-        } else {
-          await saveHighlight({
-            text: response.selectedText || info.selectionText?.trim() || '',
-            url: response.url || tab.url,
-            page_title: response.pageTitle || tab.title || '',
-            context: response.context || '',
-            color: 'yellow',
-          });
-          await updateLastSyncTime();
-          chrome.notifications.create({
-            type: 'basic',
-            iconUrl: 'icons/icon128.png',
-            title: '🖍 Highlight Saved',
-            message: `"${(response.selectedText || '').slice(0, 80)}..."`,
-            priority: 1,
-          });
-        }
-      });
-    }
-  }
-});
-
-async function saveHighlight(highlightData) {
-  try {
-    const { easy_rewind_user_id: userId, easy_rewind_api_base: apiBase } =
-      await chrome.storage.local.get(['easy_rewind_user_id', 'easy_rewind_api_base']);
-    const base = (apiBase || 'http://localhost:5000').replace(/\/+$/, '');
-    await fetch(`${base}/api/highlights`, {
+  async function capture(type, payload) {
+    const result = await apiClient.request('/api/items', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'x-user-id': userId || 'anonymous' },
-      body: JSON.stringify(highlightData),
+      body: {
+        kind: type === 'CAPTURE_SELECTION' ? 'highlight' : 'bookmark',
+        sourceUrl: payload.url,
+        title: payload.title,
+        content: payload.text,
+        occurredAt: payload.occurredAt,
+      },
     });
-    await updateLastSyncTime();
-  } catch (err) {
-    console.warn('[Highlight Save Error]', err.message);
+    await setConnection(result);
+    await notifyResult(type === 'CAPTURE_SELECTION' ? 'selection' : 'page', result);
+    return responseFor(result);
   }
-}
 
-// ─────────────────────────────────────────────
-// TAB-CLOSE REMINDER DETECTION (Problem #4)
-// ─────────────────────────────────────────────
+  async function routeMessage(message) {
+    const validated = validateExtensionMessage(message);
+    if (!validated.valid) return Object.freeze({ ok: false, error: validated.error });
 
-function trackTabForReminder(tabId, noteData) {
-  chrome.storage.local.get({ easy_rewind_tracked_tabs: {} }, (result) => {
-    const tracked = result.easy_rewind_tracked_tabs;
-    tracked[tabId] = {
-      noteId: noteData.id || 'pending',
-      content: noteData.content,
-      source_title: noteData.source_title || 'current page',
-      saved_at: new Date().toISOString(),
-    };
-    chrome.storage.local.set({ easy_rewind_tracked_tabs: tracked });
-    console.log(`[Tab Tracker] Tracking tab ${tabId} for close reminder`);
+    const accepted = validated.message;
+    switch (accepted.type) {
+      case 'GET_EXTENSION_STATE':
+        return Object.freeze({ ok: true, state: clone(state) });
+      case 'GET_PRIVACY_SNAPSHOT':
+        return Object.freeze({ ok: true, state: 'ready', data: getPrivacySnapshot() });
+      case 'GET_PAGE_SNAPSHOT':
+        return getPageSnapshot();
+      case 'CHECK_CONNECTION':
+        return checkConnection();
+      case 'RETRY_SYNC':
+        return retrySync();
+      case 'SET_LOCAL_AUTHORIZATION':
+        await authorizationStore.set(accepted.payload.connectionCode);
+        return checkConnection();
+      case 'CLEAR_LOCAL_AUTHORIZATION':
+        await authorizationStore.clear();
+        await setConnection({ state: 'authentication_required' });
+        return Object.freeze({ ok: true, state: 'authentication_required' });
+      case 'SET_CAPTURE_ENABLED':
+        await persist(next => {
+          next.capture.enabled = accepted.payload.enabled;
+        });
+        await broadcastPrivacy();
+        return Object.freeze({ ok: true, state: 'ready' });
+      case 'UPDATE_PRIVACY':
+        await persist(next => {
+          next.privacy = clone(accepted.payload);
+        });
+        await broadcastPrivacy();
+        return Object.freeze({ ok: true, state: 'ready' });
+      case 'CAPTURE_PAGE':
+      case 'CAPTURE_SELECTION':
+        return capture(accepted.type, accepted.payload);
+      case 'PRIVACY_CHANGED':
+        return Object.freeze({ ok: false, error: 'unsupported_direction' });
+      default:
+        return Object.freeze({ ok: false, error: 'invalid_message' });
+    }
+  }
+
+  function handleMessage(message, _sender, sendResponse) {
+    void initialize()
+      .then(() => routeMessage(message))
+      .then(sendResponse)
+      .catch(() => sendResponse({ ok: false, error: 'background_unavailable' }));
+    return true;
+  }
+
+  async function handleContextMenu(info, tab) {
+    await initialize();
+    if (!tab || typeof tab.url !== 'string') return;
+
+    if (info?.menuItemId === 'easy-rewind-capture-page') {
+      await capture('CAPTURE_PAGE', {
+        url: tab.url,
+        title: typeof tab.title === 'string' ? tab.title : '',
+        text: typeof tab.title === 'string' && tab.title.length > 0 ? tab.title : tab.url,
+        occurredAt: timestamp(),
+      });
+    } else if (
+      info?.menuItemId === 'easy-rewind-capture-selection' &&
+      typeof info.selectionText === 'string' &&
+      info.selectionText.trim().length > 0
+    ) {
+      await capture('CAPTURE_SELECTION', {
+        url: tab.url,
+        title: typeof tab.title === 'string' ? tab.title : '',
+        text: info.selectionText.trim(),
+        occurredAt: timestamp(),
+      });
+    }
+  }
+
+  async function recreateContextMenus() {
+    await chromeApi.contextMenus.removeAll?.();
+    for (const menu of CONTEXT_MENUS) chromeApi.contextMenus.create(menu);
+  }
+
+  async function initialize() {
+    initialization ??= (async () => {
+      state = await stateStore.load();
+      await recreateContextMenus();
+      await chromeApi.alarms.create(SYNC_ALARM, { periodInMinutes: 5 });
+      await chromeApi.alarms.create(HEALTH_ALARM, { periodInMinutes: 2 });
+      await checkConnection();
+      return true;
+    })();
+    return initialization;
+  }
+
+  async function handleAlarm(alarm) {
+    await initialize();
+    if (alarm?.name === SYNC_ALARM) return retrySync();
+    if (alarm?.name === HEALTH_ALARM) return checkConnection();
+    return undefined;
+  }
+
+  chromeApi.runtime.onMessage.addListener(handleMessage);
+  chromeApi.runtime.onInstalled?.addListener(() => initialize());
+  chromeApi.runtime.onStartup?.addListener(() => initialize());
+  chromeApi.contextMenus.onClicked?.addListener(handleContextMenu);
+  chromeApi.alarms.onAlarm?.addListener(handleAlarm);
+
+  return Object.freeze({
+    checkConnection,
+    getPrivacySnapshot,
+    handleAlarm,
+    handleContextMenu,
+    handleMessage,
+    initialize,
+    retrySync,
   });
 }
 
-chrome.tabs.onRemoved.addListener((tabId) => {
-  // Clean up engagement state for closed tabs
-  engagementState.delete(tabId);
-  promptedTabs.delete(tabId);
-  suppressedTabs.delete(tabId);
-  persistEngagementState();
-
-  // Check tab-close reminders
-  chrome.storage.local.get({ easy_rewind_tracked_tabs: {} }, (result) => {
-    const tracked = result.easy_rewind_tracked_tabs;
-    if (tracked[tabId]) {
-      const note = tracked[tabId];
-
-      chrome.notifications.create({
-        type: 'basic',
-        iconUrl: 'icons/icon128.png',
-        title: '⏰ You left this tab!',
-        message: `"${note.content.slice(0, 100)}" — tap to view your note`,
-        priority: 2,
-        buttons: [
-          { title: '📋 View Note' },
-          { title: '✓ Mark Done' },
-        ],
-        requireInteraction: true,
-      });
-
-      delete tracked[tabId];
-      chrome.storage.local.set({ easy_rewind_tracked_tabs: tracked });
-      console.log(`[Tab Tracker] Tab ${tabId} closed, reminder fired`);
-    }
+export function bootstrapBackground({
+  chromeApi = globalThis.chrome,
+  fetch: fetchImpl = globalThis.fetch,
+  now = Date.now,
+} = {}) {
+  if (!chromeApi) throw new TypeError('Chrome extension API is unavailable.');
+  const stateStore = createExtensionStateStore({
+    storageArea: chromeApi.storage.local,
+    now,
   });
-});
-
-// ─────────────────────────────────────────────
-// NOTIFICATION BUTTON HANDLER
-// ─────────────────────────────────────────────
-chrome.notifications.onButtonClicked.addListener((notificationId, buttonIndex) => {
-  // Check if this is an auto-capture notification first
-  if (notificationId.startsWith('auto-capture-')) {
-    handleAutoCaptureNotification(notificationId, buttonIndex);
-    chrome.notifications.clear(notificationId);
-    return;
-  }
-
-  // Reminder notification (prefix: reminder-)
-  if (notificationId.startsWith('reminder-')) {
-    const parts = notificationId.split('-');
-    const reminderId = parseInt(parts[1]);
-    if (buttonIndex === 0) {
-      // ✓ Mark Done — dismiss the reminder
-      if (reminderId) {
-        chrome.storage.local.get({ easy_rewind_user_id: '' }, (result) => {
-          getApiUrl(`/reminders/${reminderId}`).then(url => {
-            fetch(url, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json', 'x-user-id': result.easy_rewind_user_id || 'anonymous' },
-              body: JSON.stringify({ dismissed: true }),
-            }).catch(() => {});
-          });
-        });
-      }
-    } else if (buttonIndex === 1) {
-      // ⏱ Snooze 5 min — reschedule
-      if (reminderId) {
-        const snoozeTime = new Date(Date.now() + 5 * 60000).toISOString();
-        chrome.storage.local.get({ easy_rewind_user_id: '' }, (result) => {
-          getApiUrl(`/reminders/${reminderId}`).then(url => {
-            fetch(url, {
-              method: 'PATCH',
-              headers: { 'Content-Type': 'application/json', 'x-user-id': result.easy_rewind_user_id || 'anonymous' },
-              body: JSON.stringify({ reminded: false, remind_at: snoozeTime }),
-            }).catch(() => {});
-          });
-        });
-      }
-    }
-    chrome.notifications.clear(notificationId);
-    return;
-  }
-
-  // Default notification handling (legacy)
-  if (buttonIndex === 0) {
-    chrome.storage.local.set({ easy_rewind_open_tab: 'notes' });
-    chrome.action.openPopup();
-  }
-  chrome.notifications.clear(notificationId);
-});
-
-chrome.notifications.onClicked.addListener((notificationId) => {
-  // For auto-capture notifications, clicking body = save
-  if (notificationId.startsWith('auto-capture-')) {
-    const parts = notificationId.split('-');
-    if (parts.length >= 3) {
-      chrome.storage.local.set({ easy_rewind_open_tab: 'save' });
-      chrome.action.openPopup();
-    }
-  } else if (notificationId.startsWith('reminder-')) {
-    // Clicking a reminder notification body — open popup to notes tab
-    chrome.storage.local.set({ easy_rewind_open_tab: 'notes' });
-    chrome.action.openPopup();
-  } else {
-    chrome.storage.local.set({ easy_rewind_open_tab: 'notes' });
-    chrome.action.openPopup();
-  }
-  chrome.notifications.clear(notificationId);
-});
-
-// ─────────────────────────────────────────────
-// ALARM: Periodic Reminder Check
-// ─────────────────────────────────────────────
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === 'check-reminders') {
-    checkDueReminders();
-  }
-  if (alarm.name === 'cleanup-engagement') {
-    cleanEngagementState();
-  }
-  if (alarm.name === 'check-server-health') {
-    updateServerBadge();
-  }
-});
-
-async function checkDueReminders() {
-  try {
-    const { easy_rewind_user_id: userId } = await chrome.storage.local.get('easy_rewind_user_id');
-    if (!userId) { console.log('[Reminder Check] No userId in storage'); return; }
-
-    const url = await getApiUrl('/reminders?due=true&limit=10');
-    const response = await fetch(url, {
-      headers: { 'x-user-id': userId },
-    });
-
-    if (!response.ok) { console.log('[Reminder Check] API returned', response.status); return; }
-    const data = await response.json();
-
-    if (data.reminders && data.reminders.length > 0) {
-      console.log('[Reminder Check] Firing', data.reminders.length, 'notification(s)');
-      for (const reminder of data.reminders) {
-        const notifId = `reminder-${reminder.id}-${Date.now()}`;
-        chrome.notifications.create(notifId, {
-          type: 'basic',
-          iconUrl: 'icons/icon128.png',
-          title: reminder.title || '⏰ Reminder',
-          message: reminder.message || 'You have a pending reminder.',
-          priority: 2,
-          buttons: [
-            { title: '✓ Mark Done' },
-            { title: '⏱ Snooze 5 min' },
-          ],
-          requireInteraction: true,
-          contextMessage: reminder.reminder_type?.replace('_', ' ') || 'easy-rewind',
-        });
-
-        const ackUrl = await getApiUrl(`/reminders/${reminder.id}`);
-        await fetch(ackUrl, {
-          method: 'PATCH',
-          headers: { 'Content-Type': 'application/json', 'x-user-id': userId },
-          body: JSON.stringify({ reminded: true }),
-        }).catch(() => {});
-      }
-    }
-  } catch (err) {
-    console.warn('[Reminder Check Error]', err.message);
-  }
+  const authorizationStore = createSessionAuthorizationStore({
+    storageArea: chromeApi.storage.session,
+  });
+  const apiClient = createApiClient({
+    baseUrl: DEFAULT_API_BASE,
+    fetch: fetchImpl,
+    getAuthorization: authorizationStore.getAuthorization,
+    now,
+  });
+  const controller = createBackgroundController({
+    chromeApi,
+    apiClient,
+    authorizationStore,
+    stateStore,
+    now,
+  });
+  void controller.initialize();
+  return controller;
 }
 
-// ─────────────────────────────────────────────
-// OMNIBOX: Type "er <query>" in address bar to search
-// ─────────────────────────────────────────────
-
-chrome.omnibox.onInputEntered.addListener(async (query) => {
-  if (!query || query.trim().length === 0) return;
-
-  chrome.storage.local.set({ easy_rewind_pending_lookup: query.trim() });
-
-  try {
-    chrome.action.openPopup();
-  } catch (_) {}
-
-  try {
-    const { easy_rewind_user_id } = await chrome.storage.local.get('easy_rewind_user_id');
-    const searchUrl = await getApiUrl(`/items/search?q=${encodeURIComponent(query.trim())}`);
-    await fetch(searchUrl, {
-      headers: { 'x-user-id': easy_rewind_user_id || 'anonymous' },
-    });
-  } catch (_) {}
-});
-
-chrome.omnibox.onInputChanged.addListener((query, suggest) => {
-  if (!query || query.trim().length < 2) return suggest([]);
-
-  chrome.storage.local.get({ easy_rewind_api_base: DEFAULT_API_BASE, easy_rewind_user_id: 'anonymous' }, async (result) => {
-    const base = (result.easy_rewind_api_base || DEFAULT_API_BASE).replace(/\/+$/, '');
-    try {
-      const response = await fetch(`${base}/api/items/search?q=${encodeURIComponent(query.trim())}`, {
-        headers: { 'x-user-id': result.easy_rewind_user_id },
-      });
-      if (!response.ok) return suggest([]);
-      const data = await response.json();
-      if (data.results && data.results.length > 0) {
-        const suggestions = data.results.slice(0, 5).map(item => ({
-          content: item.title || 'Saved item',
-          description: `${item.title || 'Untitled'} — ${item.summary ? item.summary.slice(0, 80) : 'No summary'}`,
-        }));
-        suggest(suggestions);
-      }
-    } catch (_) {
-      suggest([]);
-    }
-  });
-});
-
-// ─────────────────────────────────────────────
-// KEYBOARD SHORTCUT: Quick Capture Note
-// ─────────────────────────────────────────────
-chrome.commands.onCommand.addListener((command) => {
-  if (command === 'quick-capture-note') {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const tab = tabs[0];
-      chrome.storage.local.set({
-        easy_rewind_pending_note: {
-          content: '',
-          source_url: tab?.url || '',
-          source_title: tab?.title || '',
-        },
-        easy_rewind_open_tab: 'notes',
-      });
-      chrome.action.openPopup();
-    });
-  }
-});
-
-// ─────────────────────────────────────────────
-// MESSAGE HANDLING
-// ─────────────────────────────────────────────
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // ═══ Smart Auto-Capture: engagement heartbeat ═══
-  if (message.type === 'ENGAGEMENT_UPDATE') {
-    const tabId = sender.tab?.id || message.tabId;
-    if (tabId && message.engagement) {
-      handleEngagementUpdate(tabId, message.engagement);
-    }
-    sendResponse({ received: true });
-    return true;
-  }
-
-  // ═══ Auto-capture settings update from popup ═══
-  if (message.type === 'AUTO_CAPTURE_SETTINGS') {
-    if (message.settings) {
-      autoCaptureSettings = { ...autoCaptureSettings, ...message.settings };
-      chrome.storage.local.set({ easy_rewind_auto_capture: autoCaptureSettings });
-    }
-    sendResponse({ updated: true });
-    return true;
-  }
-
-  if (message.type === 'GET_USER_ID') {
-    chrome.storage.local.get(['easy_rewind_user_id'], (result) => {
-      sendResponse({ userId: result.easy_rewind_user_id || null });
-    });
-    return true;
-  }
-
-  if (message.type === 'TRACK_TAB_REMINDER') {
-    trackTabForReminder(sender.tab?.id, message.noteData);
-    sendResponse({ tracked: true });
-    return true;
-  }
-
-  if (message.type === 'REFRESH_SERVER_BADGE') {
-    updateServerBadge();
-    sendResponse({ updated: true });
-    return true;
-  }
-
-  if (message.type === 'PING') {
-    sendResponse({ status: 'alive' });
-  }
-
-  if (message.type === 'CHECK_DUE_REMINDERS') {
-    checkDueReminders();
-    sendResponse({ checked: true });
-    return true;
-  }
-});
-
-// ─────────────────────────────────────────────
-// INIT: load settings on startup
-// ─────────────────────────────────────────────
-loadAutoCaptureSettings();
-restoreEngagementState();
-
-// Check server health on background start and set badge
-updateServerBadge();
-
-// Ensure periodic alarms are registered (also created in onInstalled,
-// but this covers service-worker restart edge cases)
-chrome.alarms.create('check-reminders', { periodInMinutes: REMINDER_CHECK_INTERVAL });
-chrome.alarms.create('check-server-health', { periodInMinutes: 2 });
-chrome.alarms.create('cleanup-engagement', {
-  periodInMinutes: 15,
-});
+if (globalThis.chrome?.runtime?.id) {
+  bootstrapBackground();
+}

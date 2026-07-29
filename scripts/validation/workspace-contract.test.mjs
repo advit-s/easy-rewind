@@ -19,15 +19,19 @@ function dependencyValues(manifest) {
   });
 }
 
-test('workspace pins the selected development runtime and one product version', () => {
+test('workspace pins the development runtime and canonical backend/desktop product version', () => {
   const repository = readJson('package.json');
   const backend = readJson('backend/package.json');
   const desktop = readJson('desktop/package.json');
+  const mobile = readJson('mobile/package.json');
 
-  assert.deepEqual(repository.workspaces, ['backend', 'desktop', 'packages/contracts']);
+  assert.deepEqual(repository.workspaces, ['backend', 'desktop', 'packages/contracts', 'mobile']);
   assert.equal(repository.version, '2.0.0');
   assert.equal(backend.version, repository.version);
   assert.equal(desktop.version, repository.version);
+  assert.equal(mobile.name, '@easy-rewind/mobile');
+  assert.equal(mobile.private, true);
+  assert.equal(mobile.engines.node, '>=24.18.0 <25');
   assert.equal(repository.packageManager, 'npm@11.6.2');
   assert.equal(readFileSync(join(root, '.nvmrc'), 'utf8').trim(), '24.18.0');
 

@@ -2,8 +2,17 @@
 
 const { createBackendComposition } = require('./composition-root');
 
-async function startStandalone({ composition, config, adapters, signalSource = process, logger = console } = {}) {
+async function startStandalone({
+  composition,
+  config,
+  adapters,
+  dashboardDirectory,
+  createComposition = createBackendComposition,
+  signalSource = process,
+  logger = console,
+} = {}) {
   if (
+    (composition === undefined && typeof createComposition !== 'function') ||
     signalSource === null ||
     typeof signalSource !== 'object' ||
     typeof signalSource.once !== 'function' ||
@@ -15,7 +24,13 @@ async function startStandalone({ composition, config, adapters, signalSource = p
   ) {
     throw new TypeError('Standalone lifecycle dependencies are invalid');
   }
-  const runtime = composition ?? createBackendComposition({ config, adapters });
+  const runtime =
+    composition ??
+    createComposition({
+      config,
+      adapters,
+      dashboardDirectory,
+    });
   if (
     runtime === null ||
     typeof runtime !== 'object' ||

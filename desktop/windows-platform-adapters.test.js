@@ -1,6 +1,7 @@
 'use strict';
 
 const assert = require('node:assert/strict');
+const { lstatSync, mkdirSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } = require('node:fs');
 const { mkdtemp, readFile, readdir, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
@@ -10,8 +11,10 @@ const {
   WindowsPlatformAdapterError,
   createDpapiProtection,
   createPowerShellAclController,
+  createPowerShellAclControllerSync,
   createStandaloneWindowsPlatformAdapters,
   createWindowsPlatformAdapters,
+  runPowerShellJsonSync,
 } = require('./windows-platform-adapters');
 
 function fakeAclController(events) {
@@ -44,6 +47,15 @@ function fakeDpapi() {
     },
     async unprotect(value) {
       return Buffer.from(value).subarray(6);
+    },
+  };
+}
+
+function fakeSyncAclController(events) {
+  return {
+    restrict(input) {
+      events.push({ ...input });
+      return { verified: true };
     },
   };
 }
@@ -163,7 +175,10 @@ test('secret filenames do not expose logical names and repeated writes keep one 
   assert.equal(files.length, 1);
   assert.equal(files[0].includes('private'), false);
   assert.equal(files[0].includes('provider'), false);
-  assert.equal(events.filter(event => event.kind === 'file').every(event => event.target.endsWith('.tmp')), true);
+  assert.equal(
+    events.filter(event => event.kind === 'file').every(event => event.target.endsWith('.tmp')),
+    true
+  );
 });
 
 test('permission adapter rejects paths outside its trusted runtime root before invoking ACL mutation', async t => {
@@ -204,18 +219,185 @@ test('standalone DPAPI command loads the Windows protection assembly and never e
   assert.equal(calls[0].input.value, plaintext.toString('base64'));
 });
 
-test('ACL command reads only access, owner, and group sections without copying privileged audit state', async () => {
+test('ACL command reads only non-audit sections and short-circuits an already exact ACL', async () => {
   const controller = createPowerShellAclController({
     async execute(options) {
       assert.match(options.script, /AccessControlSections\]'Access, Owner, Group'/);
       assert.match(options.script, /Directory\]::GetAccessControl/);
       assert.match(options.script, /File\]::GetAccessControl/);
       assert.doesNotMatch(options.script, /Get-Acl/);
+      const exactCheck = options.script.indexOf('Test-ExactCurrentUserAcl');
+      const mutation = options.script.indexOf('Set-Acl');
+      assert.notEqual(exactCheck, -1);
+      assert.notEqual(mutation, -1);
+      assert.ok(exactCheck < mutation);
+      assert.match(options.script, /if \(Test-ExactCurrentUserAcl[\s\S]+?exit 0/);
       return { verified: true };
     },
   });
 
   assert.deepEqual(await controller.restrict({ kind: 'file', target: 'C:\\fixture\\secret.bin' }), {
+    verified: true,
+  });
+});
+
+test('artifact permissions synchronously restrict a runtime file and preserve its identity', async t => {
+  const localAppData = await mkdtemp(join(tmpdir(), 'easy-rewind-platform-artifact-'));
+  t.after(() => rm(localAppData, { force: true, recursive: true }));
+  const events = [];
+  const adapters = createStandaloneWindowsPlatformAdapters({
+    aclController: fakeAclController([]),
+    dpapi: fakeDpapi(),
+    localAppData,
+    platform: 'win32',
+    syncAclController: fakeSyncAclController(events),
+  });
+  const target = resolve(adapters.storageRoot, 'exports', 'owner-one', 'export.json.tmp');
+  mkdirSync(resolve(target, '..'), { recursive: true });
+  writeFileSync(target, 'sensitive export');
+  const identityBefore = `${String(lstatSync(target).dev)}:${String(lstatSync(target).ino)}`;
+
+  assert.equal(adapters.artifactFilePermissions.restrictFile(target), undefined);
+
+  assert.deepEqual(events, [{ kind: 'file', target }]);
+  const identityAfter = `${String(lstatSync(target).dev)}:${String(lstatSync(target).ino)}`;
+  assert.equal(identityAfter, identityBefore);
+});
+
+test('artifact permissions reject outside-root and linked targets before ACL mutation', async t => {
+  const localAppData = await mkdtemp(join(tmpdir(), 'easy-rewind-platform-artifact-boundary-'));
+  t.after(() => rm(localAppData, { force: true, recursive: true }));
+  const events = [];
+  const adapters = createStandaloneWindowsPlatformAdapters({
+    aclController: fakeAclController([]),
+    dpapi: fakeDpapi(),
+    localAppData,
+    platform: 'win32',
+    syncAclController: fakeSyncAclController(events),
+  });
+  const outside = resolve(localAppData, 'outside');
+  const outsideFile = resolve(outside, 'artifact.json');
+  mkdirSync(outside, { recursive: true });
+  writeFileSync(outsideFile, 'outside');
+
+  assert.throws(
+    () => adapters.artifactFilePermissions.restrictFile(outsideFile),
+    error => error instanceof WindowsPlatformAdapterError && error.code === 'WINDOWS_ACL_TARGET_INVALID'
+  );
+
+  const linkedOwner = resolve(adapters.storageRoot, 'exports', 'linked-owner');
+  mkdirSync(resolve(linkedOwner, '..'), { recursive: true });
+  try {
+    symlinkSync(outside, linkedOwner, process.platform === 'win32' ? 'junction' : 'dir');
+  } catch (error) {
+    if (error?.code === 'EPERM' || error?.code === 'EACCES') {
+      t.skip('creating links is unavailable to this Windows user');
+      return;
+    }
+    throw error;
+  }
+  assert.throws(
+    () => adapters.artifactFilePermissions.restrictFile(resolve(linkedOwner, 'artifact.json')),
+    error => error instanceof WindowsPlatformAdapterError && error.code === 'WINDOWS_ACL_TARGET_INVALID'
+  );
+  assert.deepEqual(events, []);
+});
+
+test('artifact permissions fail verification when ACL mutation replaces the file', async t => {
+  const localAppData = await mkdtemp(join(tmpdir(), 'easy-rewind-platform-artifact-race-'));
+  t.after(() => rm(localAppData, { force: true, recursive: true }));
+  const adapters = createStandaloneWindowsPlatformAdapters({
+    aclController: fakeAclController([]),
+    dpapi: fakeDpapi(),
+    localAppData,
+    platform: 'win32',
+    syncAclController: {
+      restrict() {
+        unlinkSync(target);
+        writeFileSync(target, 'replacement');
+        return { verified: true };
+      },
+    },
+  });
+  const target = resolve(adapters.storageRoot, 'backups', 'owner-one', 'backup.json.tmp');
+  mkdirSync(resolve(target, '..'), { recursive: true });
+  writeFileSync(target, 'original');
+
+  assert.throws(
+    () => adapters.artifactFilePermissions.restrictFile(target),
+    error => error instanceof WindowsPlatformAdapterError && error.code === 'WINDOWS_ACL_VERIFICATION_FAILED'
+  );
+});
+
+test('artifact permissions reject reparse-point metadata before ACL mutation', async t => {
+  const localAppData = await mkdtemp(join(tmpdir(), 'easy-rewind-platform-artifact-reparse-'));
+  t.after(() => rm(localAppData, { force: true, recursive: true }));
+  const events = [];
+  const adapters = createStandaloneWindowsPlatformAdapters({
+    aclController: fakeAclController([]),
+    dpapi: fakeDpapi(),
+    localAppData,
+    platform: 'win32',
+    syncAclController: fakeSyncAclController(events),
+    syncFilesystem: {
+      lstatSync(target) {
+        const metadata = lstatSync(target, { bigint: true });
+        return {
+          dev: metadata.dev,
+          ino: metadata.ino,
+          isDirectory: () => metadata.isDirectory(),
+          isFile: () => metadata.isFile(),
+          isReparsePoint: () => true,
+          isSymbolicLink: () => metadata.isSymbolicLink(),
+        };
+      },
+      realpathSync,
+    },
+  });
+  const target = resolve(adapters.storageRoot, 'exports', 'owner-one', 'artifact.json.tmp');
+  mkdirSync(resolve(target, '..'), { recursive: true });
+  writeFileSync(target, 'artifact');
+
+  assert.throws(
+    () => adapters.artifactFilePermissions.restrictFile(target),
+    error => error instanceof WindowsPlatformAdapterError && error.code === 'WINDOWS_ACL_TARGET_INVALID'
+  );
+  assert.deepEqual(events, []);
+});
+
+test('synchronous PowerShell runner hides its window and bounds time and output', () => {
+  const calls = [];
+  const result = runPowerShellJsonSync({
+    executable: 'powershell.exe',
+    input: { target: 'C:\\runtime\\artifact.json' },
+    script: 'script-body',
+    spawnSync(executable, args, options) {
+      calls.push({ executable, args, options });
+      return { error: undefined, signal: null, status: 0, stdout: '{"verified":true}' };
+    },
+  });
+
+  assert.deepEqual(result, { verified: true });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.windowsHide, true);
+  assert.equal(calls[0].options.timeout, 15_000);
+  assert.equal(calls[0].options.maxBuffer <= 1024 * 1024, true);
+  assert.equal(calls[0].options.stdio[2], 'ignore');
+  assert.equal(calls[0].options.input, JSON.stringify({ target: 'C:\\runtime\\artifact.json' }));
+});
+
+test('synchronous ACL controller uses the exact current-user ACL verification script', () => {
+  const controller = createPowerShellAclControllerSync({
+    execute(options) {
+      assert.match(options.script, /WindowsIdentity\]::GetCurrent\(\)\.User/);
+      assert.match(options.script, /\$candidateRules\.Count -eq 1/);
+      assert.match(options.script, /FileSystemRights\]::FullControl/);
+      assert.match(options.script, /AreAccessRulesProtected/);
+      return { verified: true };
+    },
+  });
+
+  assert.deepEqual(controller.restrict({ kind: 'file', target: 'C:\\fixture\\artifact.json' }), {
     verified: true,
   });
 });

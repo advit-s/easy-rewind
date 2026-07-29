@@ -23,33 +23,32 @@
   },
 
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
 
   "content_scripts": [
     {
-      "matches": ["<all_urls>"],
-      "js": ["content.js"],
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["content-loader.js"],
       "run_at": "document_idle"
     }
   ],
 
-  "permissions": [
-    "activeTab",
-    "storage",
-    "tabs",
-    "contextMenus",
-    "notifications",
-    "alarms",
-    "scripting"
+  "permissions": ["activeTab", "alarms", "contextMenus", "notifications", "storage"],
+
+  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"],
+
+  "web_accessible_resources": [
+    {
+      "resources": ["content.js", "src/message-contracts.js", "src/privacy-policy.js"],
+      "matches": ["http://*/*", "https://*/*"],
+      "use_dynamic_url": true
+    }
   ],
 
-  "host_permissions": [
-    "http://localhost:*/*"
-  ],
-
-  "omnibox": {
-    "keyword": "er"
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'; frame-src 'none'"
   },
 
   "commands": {
@@ -59,13 +58,6 @@
         "mac": "Command+Shift+E"
       },
       "description": "Open easy-rewind popup"
-    },
-    "quick-capture-note": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+N",
-        "mac": "Command+Shift+N"
-      },
-      "description": "Quick capture a note/thought"
     }
   }
 }

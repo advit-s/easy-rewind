@@ -59,6 +59,16 @@ function createReminderRouter({ reminderService, authMiddleware } = {}) {
   const express = require('express');
   const router = express.Router();
   const protect = authenticated(authMiddleware);
+  const acknowledgeDelivery = asyncRoute(async (request, response) => {
+    const acknowledge = requireService(reminderService, 'acknowledgeDelivery');
+    const context = getRequestContext(request);
+    const result = await acknowledge({
+      profileId: context.profileId,
+      deviceId: text(context.deviceId),
+      deliveryId: text(request.params.id),
+    });
+    response.status(200).json({ delivery: result });
+  });
 
   router.post(
     '/v1/reminders',
@@ -136,20 +146,32 @@ function createReminderRouter({ reminderService, authMiddleware } = {}) {
     })
   );
 
-  router.post(
-    '/v1/reminder-deliveries/:id/acknowledge',
+  router.post('/v1/reminder-deliveries/:id/acknowledge', protect, acknowledgeDelivery);
+
+  router.get(
+    '/api/reminder-deliveries',
     protect,
     asyncRoute(async (request, response) => {
-      const acknowledge = requireService(reminderService, 'acknowledgeDelivery');
+      const list = requireService(reminderService, 'listDeliveryOutbox');
       const context = getRequestContext(request);
-      const result = await acknowledge({
+      const channel = text(request.query.channel, { maximum: 16 });
+      if (channel !== 'desktop') invalid();
+      const result = await list({
         profileId: context.profileId,
         deviceId: text(context.deviceId),
-        deliveryId: text(request.params.id),
+        channel,
+        cursor: request.query.cursor === undefined ? undefined : text(request.query.cursor, { maximum: 512 }),
+        limit: request.query.limit === undefined ? 25 : integer(request.query.limit, { minimum: 1, maximum: 100 }),
       });
-      response.status(200).json({ delivery: result });
+      response.status(200).json({
+        deliveries: result.items,
+        nextCursor: result.nextCursor,
+        hasMore: result.hasMore,
+      });
     })
   );
+
+  router.post('/api/reminder-deliveries/:id/acknowledge', protect, acknowledgeDelivery);
 
   return router;
 }

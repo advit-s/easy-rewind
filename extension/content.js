@@ -1,408 +1,274 @@
-/**
- * easy-rewind Learning Assistant — content.js
- *
- * Runs on every webpage:
- * - Reads page info for popup/background
- * - Tracks engagement for Smart Auto-Capture
- * - Responds to messages from popup.js and background.js
- */
+import { validateExtensionMessage } from './src/message-contracts.js';
+import { evaluateCapture, isCompletePrivacySnapshot, isSelectionCaptureAllowed } from './src/privacy-policy.js';
 
-// ═══════════════════════════════════════════════
-// ENGAGEMENT TRACKING (Smart Auto-Capture)
-// ═══════════════════════════════════════════════
+const MAX_PAGE_TEXT_LENGTH = 131_072;
+const MAX_SELECTION_TEXT_LENGTH = 32_768;
 
-const EngagementTracker = (() => {
-  const state = {
-    startTime: Date.now(),
-    maxScrollDepth: 0,
-    scrollEvents: 0,
-    lastScrollTime: 0,
-    totalScrollDuration: 0,     // ms spent actively scrolling
-    visibleTime: 0,             // ms page was in foreground
-    lastVisibleCheck: Date.now(),
-    clicks: 0,
-    selections: 0,
-    keypresses: 0,
-    isVisible: !document.hidden,
-    heartbeatInterval: null,
-    wasEngaged: false,          // true once threshold has been crossed
-    scrollTimer: null,
-    isScrolling: false,
-    scrollStartTime: 0,
-    sourceType: null,           // detected on init
-  };
+function inertController() {
+  return Object.freeze({
+    active: false,
+    start() {},
+    dispose() {},
+  });
+}
 
-  const SETTINGS_KEY = 'easy_rewind_auto_capture';
-  const HEARTBEAT_MS = 15000;    // send engagement update every 15s
-  const FLUSH_MS = 2000;         // delay flush after scroll stops
-
-  // ── Settings (loaded from chrome.storage, with defaults) ──
-  let settings = {
-    enabled: true,
-    minMinutes: 5,              // minimum minutes of visible time
-    minScrollPct: 80,           // minimum scroll depth percentage
-    promptOnThreshold: true,    // show notification when threshold is crossed
-  };
-
-  // ── Source type detection ──
-  function detectSourceType() {
-    const url = window.location.href.toLowerCase();
-
-    // Explicit URL-based detection
-    if (url.includes('youtube.com') || url.includes('youtu.be')) return 'youtube';
-    if (url.includes('github.com')) return 'github';
-
-    // Content-based detection
-    const hasVideo = document.querySelector('video, [data-youtube-video]');
-    if (hasVideo && (url.includes('watch') || url.includes('/video/') || url.includes('/tv/'))) return 'youtube';
-
-    // Check for article/blog markers
-    const hasArticle = document.querySelector('article');
-    const hasBlogMeta = document.querySelector('[property="article:published_time"], meta[name="blog"]');
-    const hasAuthor = document.querySelector('[rel="author"], .author, .byline');
-    const hasPostClass = document.querySelector('[class*="post"], [class*="article"], [id*="post-"]');
-    if (hasArticle || hasBlogMeta || (hasAuthor && hasPostClass)) return 'blog';
-
-    // Documentation markers
-    const hasDocsMeta = document.querySelector('[class*="doc"], [class*="tutorial"], [class*="guide"], [id*="doc-"]');
-    const hasCodeBlock = document.querySelector('pre code, pre.chroma');
-    const urlHasDocs = url.includes('docs.') || url.includes('learn.') || url.includes('wiki.');
-    if (urlHasDocs || (hasDocsMeta && hasCodeBlock)) return 'docs';
-
-    // News markers
-    const hasNewsMeta = document.querySelector('[property="article:section"], meta[name="news_keywords"]');
-    const urlIsNews = url.includes('news.') || url.includes('/news/');
-    if (urlIsNews || hasNewsMeta) return 'news';
-
-    // GitHub (content-based fallback)
-    const hasRepoMeta = document.querySelector('[class*="repository"], [class*="repo"]');
-    if (hasRepoMeta && window.location.hostname === 'github.com') return 'github';
-
-    return 'web';
+function runtimeSend(runtime, message) {
+  if (!runtime?.sendMessage) return Promise.resolve(undefined);
+  try {
+    const result = runtime.sendMessage(message);
+    return result && typeof result.then === 'function' ? result : Promise.resolve(result);
+  } catch {
+    return Promise.resolve(undefined);
   }
+}
 
-  // ── Get adaptive engagement weights based on content type ──
-  function getEngagementWeights() {
-    const type = state.sourceType || 'web';
-    const weights = {
-      //           time  scroll  click  select  key  visible
-      youtube: [0.50, 0.10, 0.10, 0.05, 0.05, 0.20],  // watch time dominant
-      github:  [0.40, 0.15, 0.10, 0.10, 0.10, 0.15],  // time + selections
-      blog:    [0.30, 0.35, 0.10, 0.10, 0.05, 0.10],  // scroll depth matters most
-      docs:    [0.25, 0.30, 0.10, 0.20, 0.05, 0.10],  // selections + scroll
-      news:    [0.35, 0.30, 0.10, 0.05, 0.05, 0.15],  // scroll + time
-      web:     [0.35, 0.30, 0.10, 0.10, 0.05, 0.10],  // balanced default
-    };
-    return weights[type] || weights.web;
-  }
+export async function requestPrivacySnapshot(runtime) {
+  const request = validateExtensionMessage({ type: 'GET_PRIVACY_SNAPSHOT' });
+  if (!request.valid) return null;
+  const response = await runtimeSend(runtime, request.message);
+  const snapshot =
+    response?.ok === true && response?.state === 'ready' && isCompletePrivacySnapshot(response.data)
+      ? response.data
+      : response;
+  return isCompletePrivacySnapshot(snapshot) ? snapshot : null;
+}
 
-  // ── Get adaptive thresholds based on content type ──
-  function getAdaptiveThresholds() {
-    const type = state.sourceType || 'web';
-    const thresholds = {
-      youtube: { minMinutes: 3, minScrollPct: 50, scoreThreshold: 60 },   // shorter watch, less scrolling
-      github:  { minMinutes: 4, minScrollPct: 60, scoreThreshold: 60 },   // browsing repos
-      blog:    { minMinutes: 5, minScrollPct: 80, scoreThreshold: 65 },   // full read
-      docs:    { minMinutes: 4, minScrollPct: 70, scoreThreshold: 60 },   // reference reading
-      news:    { minMinutes: 3, minScrollPct: 60, scoreThreshold: 55 },   // quick scan
-      web:     { minMinutes: 5, minScrollPct: 80, scoreThreshold: 65 },   // default
-    };
-    return thresholds[type] || thresholds.web;
-  }
-
-  // ── Scroll tracking ──
-  function onScroll() {
-    const now = Date.now();
-    state.scrollEvents++;
-
-    // Calculate scroll depth
-    const scrollTop = window.scrollY;
-    const docHeight = Math.max(
-      document.body.scrollHeight,
-      document.body.offsetHeight,
-      document.documentElement.clientHeight,
-      document.documentElement.scrollHeight
-    );
-    const winHeight = window.innerHeight;
-    const maxScroll = docHeight - winHeight;
-    const depth = maxScroll > 0 ? Math.round((scrollTop / maxScroll) * 100) : 100;
-    state.maxScrollDepth = Math.max(state.maxScrollDepth, depth);
-
-    // Track active scrolling duration (user is actively scrolling)
-    if (!state.isScrolling) {
-      state.isScrolling = true;
-      state.scrollStartTime = now;
-    }
-    state.lastScrollTime = now;
-
-    // Debounce: after 2s of no scroll, accumulate duration
-    clearTimeout(state.scrollTimer);
-    state.scrollTimer = setTimeout(() => {
-      if (state.isScrolling) {
-        state.totalScrollDuration += now - state.scrollStartTime;
-        state.isScrolling = false;
-      }
-    }, FLUSH_MS);
-  }
-
-  // ── Click tracking ──
-  function onClick() {
-    state.clicks++;
-  }
-
-  // ── Selection tracking ──
-  function onSelection() {
-    const sel = window.getSelection();
-    if (sel && !sel.isCollapsed && sel.toString().trim().length > 3) {
-      state.selections++;
-    }
-  }
-
-  // ── Keypress tracking ──
-  function onKeypress() {
-    state.keypresses++;
-  }
-
-  // ── Visibility tracking ──
-  function onVisibilityChange() {
-    const now = Date.now();
-    if (document.hidden) {
-      // Page went hidden — accumulate visible time
-      state.visibleTime += now - state.lastVisibleCheck;
-      state.isVisible = false;
-      // Flush engagement data immediately so background.js has latest
-      flushEngagement();
-    } else {
-      state.lastVisibleCheck = now;
-      state.isVisible = true;
-    }
-  }
-
-  // ── Load settings from chrome.storage ──
-  function loadSettings() {
-    try {
-      chrome.storage.local.get(SETTINGS_KEY, (result) => {
-        if (result[SETTINGS_KEY]) {
-          settings = { ...settings, ...result[SETTINGS_KEY] };
-        }
-      });
-    } catch (_) {
-      // chrome.storage may not be available in some contexts
-    }
-  }
-
-  // ── Compute current engagement score (0-100) with adaptive weights ──
-  function getEngagementScore() {
-    const now = Date.now();
-    const elapsedMs = now - state.startTime;
-    const elapsedMin = elapsedMs / 60000;
-
-    // Get adaptive thresholds for this content type
-    const adaptive = getAdaptiveThresholds();
-    const weights = getEngagementWeights();
-
-    // Visible time ratio (how much of elapsed time was page visible)
-    const visibleRatio = elapsedMin > 0
-      ? Math.min(1, (state.visibleTime + (state.isVisible ? (now - state.lastVisibleCheck) : 0)) / elapsedMs)
-      : 0;
-
-    // Scores for each dimension (0-1) — uses adaptive minMinutes/minScrollPct
-    const timeScore    = Math.min(1, elapsedMin / (adaptive.minMinutes || settings.minMinutes));
-    const scrollScore  = Math.min(1, state.maxScrollDepth / (adaptive.minScrollPct || settings.minScrollPct));
-    const clickScore   = Math.min(1, state.clicks / 5);
-    const selectScore  = Math.min(1, state.selections / 3);
-    const keyScore     = Math.min(1, state.keypresses / 20);
-
-    // Adaptive weighted composite
-    const composite = (weights[0] * timeScore) + (weights[1] * scrollScore) + (weights[2] * clickScore)
-                    + (weights[3] * selectScore) + (weights[4] * keyScore) + (weights[5] * visibleRatio);
-
-    return {
-      score: Math.round(composite * 100),
-      elapsed_min: Math.round(elapsedMin * 10) / 10,
-      max_scroll_depth: state.maxScrollDepth,
-      clicks: state.clicks,
-      selections: state.selections,
-      visible_ratio: Math.round(visibleRatio * 100),
-      source_type: state.sourceType || 'web',
-    };
-  }
-
-  // ── Flush engagement data to background.js ──
-  function flushEngagement() {
-    try {
-      const data = getEngagementScore();
-      chrome.runtime.sendMessage({
-        type: 'ENGAGEMENT_UPDATE',
-        tabId: null, // background.js will infer from sender
-        engagement: data,
-        url: window.location.href,
-        title: document.title || 'Untitled Page',
-      }, () => {
-        // Ignore errors (background might be starting up)
-        if (chrome.runtime.lastError) { /* silent */ }
-      });
-    } catch (_) {
-      // Background might not be ready
-    }
-  }
-
-  // ── Heartbeat: periodically send engagement data ──
-  function startHeartbeat() {
-    if (state.heartbeatInterval) return;
-    state.heartbeatInterval = setInterval(() => {
-      if (state.isVisible) {
-        const now = Date.now();
-        state.visibleTime += now - state.lastVisibleCheck;
-        state.lastVisibleCheck = now;
-      }
-      flushEngagement();
-    }, HEARTBEAT_MS);
-  }
-
-  // ── Public init ──
-  function init() {
-    // Detect source type once on page load
-    state.sourceType = detectSourceType();
-
-    loadSettings();
-    if (!settings.enabled) return;
-
-    // Attach event listeners
-    window.addEventListener('scroll', onScroll, { passive: true });
-    document.addEventListener('click', onClick);
-    document.addEventListener('selectionchange', onSelection);
-    document.addEventListener('keydown', onKeypress);
-    document.addEventListener('visibilitychange', onVisibilityChange);
-
-    // Flush on beforeunload
-    window.addEventListener('beforeunload', () => {
-      if (state.isVisible) {
-        state.visibleTime += Date.now() - state.lastVisibleCheck;
-      }
-      flushEngagement();
-    });
-
-    startHeartbeat();
-
-    // Log detected type for debugging
-    console.log(`[easy-rewind] Tracking ${state.sourceType} page:`, window.location.hostname);
-  }
-
-  return { init, getEngagementScore, flushEngagement, detectSourceType, settings };
-})();
-
-// ═══════════════════════════════════════════════
-// MESSAGE LISTENER
-// ═══════════════════════════════════════════════
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-
-  // Popup requesting current page info
-  if (message.type === 'GET_PAGE_INFO') {
-    sendResponse({
-      url: window.location.href,
-      title: document.title || 'Untitled Page',
-      description: getPageDescription(),
-      textContent: getPageText(),
-      keywords: getPageKeywords(),
-      engagement: EngagementTracker.getEngagementScore(),
-      source_type: EngagementTracker.detectSourceType(),
-    });
-    return true;
-  }
-
-  // Popup requesting AI summarization of this page
-  if (message.type === 'SUMMARY_PAGE') {
-    const text = getPageText();
-    const title = document.title || 'Untitled Page';
-    const description = getPageDescription();
-    sendResponse({
-      title,
-      url: window.location.href,
-      description,
-      textContent: text.slice(0, 6000),
-    });
-    return true;
-  }
-
-  // Popup requesting highlighted text + context
-  if (message.type === 'HIGHLIGHT_TEXT') {
-    const selection = window.getSelection();
-    if (!selection || selection.isCollapsed) {
-      sendResponse({ error: 'No text selected' });
-      return true;
-    }
-    const selectedText = selection.toString().trim();
-    if (!selectedText) {
-      sendResponse({ error: 'No text selected' });
-      return true;
-    }
-
-    // Get surrounding context from the parent node
-    let contextText = '';
-    const range = selection.getRangeAt(0);
-    const parentNode = range.commonAncestorContainer;
-    const parentEl = parentNode.nodeType === 3 ? parentNode.parentElement : parentNode;
-    if (parentEl) {
-      const block = parentEl.closest('p, li, td, div, h1, h2, h3, h4, h5, h6, blockquote, section, article') || parentEl;
-      contextText = (block.textContent || '').trim().slice(0, 3000);
-    }
-
-    if (contextText.length < selectedText.length + 40) {
-      contextText = getPageText().slice(0, 3000);
-    }
-
-    sendResponse({
-      selectedText,
-      context: contextText,
-      url: window.location.href,
-      pageTitle: document.title || 'Untitled Page',
-    });
-    return true;
-  }
-
-  // Ping check
-  if (message.type === 'PING') {
-    sendResponse({ status: 'alive', url: window.location.href });
-    return true;
-  }
-});
-
-// ═══════════════════════════════════════════════
-// HELPERS
-// ═══════════════════════════════════════════════
-
-function getPageText() {
-  const clone = document.body?.cloneNode(true);
+function safePageText(document) {
+  const clone = document?.body?.cloneNode?.(true);
   if (!clone) return '';
-  const removals = clone.querySelectorAll('script, style, nav, footer, header, iframe, ' +
-    'svg, noscript, [role="navigation"], [role="banner"], [role="contentinfo"], ' +
-    '.sidebar, .nav, .footer, .header, .menu, .ad, .advertisement');
-  removals.forEach(el => el.remove());
-  const text = clone.textContent || '';
-  return text.replace(/\s+/g, ' ').trim().slice(0, 8000);
+  const removals = clone.querySelectorAll?.(
+    'script, style, nav, footer, header, iframe, svg, noscript, form, input, textarea, select, option, button, [contenteditable], [role="textbox"], [role="navigation"], [role="banner"], [role="contentinfo"]'
+  );
+  removals?.forEach(element => element.remove());
+  return String(clone.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_PAGE_TEXT_LENGTH);
 }
 
-function getPageDescription() {
-  const metaDesc = document.querySelector('meta[name="description"]')?.content;
-  if (metaDesc) return metaDesc.slice(0, 200);
-  const ogDesc = document.querySelector('meta[property="og:description"]')?.content;
-  if (ogDesc) return ogDesc.slice(0, 200);
-  const firstP = document.querySelector('p');
-  if (firstP) return firstP.textContent?.trim().slice(0, 200);
-  return '';
+function selectedText(window, document) {
+  const selection = window?.getSelection?.() || document?.getSelection?.();
+  if (!selection || selection.isCollapsed) return { selection, text: '' };
+  return {
+    selection,
+    text: String(selection.toString?.() || '')
+      .trim()
+      .slice(0, MAX_SELECTION_TEXT_LENGTH),
+  };
 }
 
-function getPageKeywords() {
-  const metaKeywords = document.querySelector('meta[name="keywords"]')?.content;
-  if (metaKeywords) return metaKeywords.slice(0, 300);
-  return '';
+export function createContentController({
+  window,
+  document,
+  runtime,
+  settings,
+  now = Date.now,
+  sendMessage = message => runtimeSend(runtime, message),
+  setTimeout: setTimeoutFn = globalThis.setTimeout,
+  clearTimeout: clearTimeoutFn = globalThis.clearTimeout,
+  observePrivacy = true,
+}) {
+  if (!isCompletePrivacySnapshot(settings)) return inertController();
+
+  const listenerDisposers = [];
+  const timerIds = new Set();
+  const startedAt = now();
+  let active = false;
+  let pageCaptured = false;
+
+  function addDomListener(target, type, listener, options) {
+    target?.addEventListener?.(type, listener, options);
+    listenerDisposers.push(() => target?.removeEventListener?.(type, listener, options));
+  }
+
+  function sendValidated(message) {
+    if (!active) return;
+    const result = validateExtensionMessage(message);
+    if (result.valid) void sendMessage(result.message);
+  }
+
+  function currentDecision(selection = null, length = 0) {
+    return evaluateCapture({
+      settings,
+      location: window.location,
+      document,
+      dwellMs: Math.max(0, now() - startedAt),
+      selection,
+      selectionLength: length,
+    });
+  }
+
+  function capturePage() {
+    if (pageCaptured || !active) return;
+    const decision = currentDecision();
+    if (!decision.pageCaptureAllowed) return;
+    const text = safePageText(document);
+    if (!text) return;
+    pageCaptured = true;
+    sendValidated({
+      type: 'CAPTURE_PAGE',
+      payload: {
+        url: window.location.href,
+        title: String(document.title || 'Untitled Page').slice(0, 512),
+        text,
+        occurredAt: now(),
+      },
+    });
+  }
+
+  function captureSelection() {
+    if (!active) return;
+    const { selection, text } = selectedText(window, document);
+    if (
+      !isSelectionCaptureAllowed(selection, text.length, settings.minimumSelectionLength) ||
+      !currentDecision(selection, text.length).selectionCaptureAllowed
+    ) {
+      return;
+    }
+    sendValidated({
+      type: 'CAPTURE_SELECTION',
+      payload: {
+        url: window.location.href,
+        title: String(document.title || 'Untitled Page').slice(0, 512),
+        text,
+        occurredAt: now(),
+      },
+    });
+  }
+
+  function dispose() {
+    if (!active && listenerDisposers.length === 0 && timerIds.size === 0) return;
+    active = false;
+    for (const remove of listenerDisposers.splice(0)) remove();
+    for (const timerId of timerIds) clearTimeoutFn(timerId);
+    timerIds.clear();
+  }
+
+  function onPrivacyMessage(message) {
+    const result = validateExtensionMessage(message);
+    if (result.valid && result.message.type === 'PRIVACY_CHANGED' && result.message.payload.captureEnabled === false) {
+      dispose();
+    }
+  }
+
+  function start() {
+    if (active || settings.captureEnabled !== true) return;
+    const initial = currentDecision();
+    if (!initial.allowed) return;
+    active = true;
+
+    addDomListener(document, 'selectionchange', captureSelection);
+    addDomListener(window, 'beforeunload', capturePage);
+    if (observePrivacy && runtime?.onMessage?.addListener) {
+      runtime.onMessage.addListener(onPrivacyMessage);
+      listenerDisposers.push(() => runtime.onMessage.removeListener?.(onPrivacyMessage));
+    }
+
+    const timerId = setTimeoutFn(() => {
+      timerIds.delete(timerId);
+      capturePage();
+    }, settings.minimumDwellMs);
+    timerIds.add(timerId);
+  }
+
+  return {
+    get active() {
+      return active;
+    },
+    start,
+    dispose,
+  };
 }
 
-// ═══════════════════════════════════════════════
-// INIT
-// ═══════════════════════════════════════════════
+export async function startContentCapture({
+  window,
+  document,
+  runtime,
+  requestPrivacySnapshot: loadPrivacy = () => requestPrivacySnapshot(runtime),
+  ...controllerDependencies
+}) {
+  const settings = await loadPrivacy();
+  if (!isCompletePrivacySnapshot(settings)) return inertController();
+  const decision = evaluateCapture({ settings, location: window.location, document });
+  if (!decision.allowed) return inertController();
+  const controller = createContentController({
+    window,
+    document,
+    runtime,
+    settings,
+    ...controllerDependencies,
+  });
+  controller.start();
+  return controller;
+}
 
-EngagementTracker.init();
-console.log('[easy-rewind] Content script loaded on:', window.location.hostname);
+export function startContentRuntime({
+  window,
+  document,
+  runtime,
+  loadPrivacy = () => requestPrivacySnapshot(runtime),
+  ...controllerDependencies
+}) {
+  if (!runtime?.onMessage?.addListener || !runtime?.onMessage?.removeListener) {
+    throw new TypeError('A runtime message event is required.');
+  }
+
+  let controller = inertController();
+  let disposed = false;
+
+  function apply(settings) {
+    if (disposed || !isCompletePrivacySnapshot(settings)) return controller;
+    controller.dispose();
+    const decision = evaluateCapture({ settings, location: window.location, document });
+    if (!decision.allowed) {
+      controller = inertController();
+      return controller;
+    }
+    controller = createContentController({
+      window,
+      document,
+      runtime,
+      settings,
+      ...controllerDependencies,
+      observePrivacy: false,
+    });
+    controller.start();
+    return controller;
+  }
+
+  function onMessage(message) {
+    const validation = validateExtensionMessage(message);
+    if (validation.valid && validation.message.type === 'PRIVACY_CHANGED') {
+      apply(validation.message.payload);
+    }
+  }
+
+  runtime.onMessage.addListener(onMessage);
+  const ready = Promise.resolve()
+    .then(loadPrivacy)
+    .then(apply)
+    .catch(() => controller);
+
+  function dispose() {
+    if (disposed) return;
+    disposed = true;
+    controller.dispose();
+    runtime.onMessage.removeListener(onMessage);
+  }
+
+  return Object.freeze({
+    get active() {
+      return controller.active;
+    },
+    dispose,
+    ready,
+  });
+}
+
+if (typeof window !== 'undefined' && typeof document !== 'undefined' && globalThis.chrome?.runtime) {
+  startContentRuntime({
+    window,
+    document,
+    runtime: globalThis.chrome.runtime,
+  });
+}

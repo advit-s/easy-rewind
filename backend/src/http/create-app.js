@@ -1,10 +1,77 @@
 'use strict';
 
 const { randomUUID } = require('node:crypto');
+const path = require('node:path');
+const { createDeviceAuthMiddleware, createLocalAuthMiddleware } = require('../auth/auth-middleware');
+const { createDashboardRouter } = require('./dashboard-routes');
 const { createHttpError, errorHandler } = require('./error-handler');
 const { createHealthRouter } = require('./health-routes');
 const { createCompatibilityRouter } = require('../routes/compatibility-routes');
+const { createContentRouter } = require('../routes/content-routes');
 const { createContractRouter } = require('../routes/contract-routes');
+const { createImportExportRouter } = require('../routes/import-export-routes');
+const { createLearningRouter } = require('../routes/learning-routes');
+const { createReminderRouter } = require('../routes/reminder-routes');
+const { createResearchRouter } = require('../routes/research-routes');
+const { createSyncRouter } = require('../routes/sync-routes');
+
+function mountStage3Routes(app, dependencies) {
+  const localAuthMiddleware =
+    dependencies.localAuthMiddleware ??
+    (typeof dependencies.installTokenService?.authenticate === 'function' ||
+    typeof dependencies.browserSessionService?.authenticate === 'function'
+      ? createLocalAuthMiddleware(dependencies)
+      : undefined);
+  const deviceAuthMiddleware =
+    dependencies.deviceAuthMiddleware ??
+    (typeof dependencies.pairingService?.authenticateDevice === 'function'
+      ? createDeviceAuthMiddleware(dependencies)
+      : undefined);
+  if (dependencies.contentService !== undefined || dependencies.graphService !== undefined) {
+    app.use(createContentRouter({ ...dependencies, localAuthMiddleware }));
+  }
+  if (dependencies.learningService !== undefined) {
+    app.use(
+      createLearningRouter({
+        learningService: dependencies.learningService,
+        authMiddleware: localAuthMiddleware,
+      })
+    );
+  }
+  if (dependencies.reminderService !== undefined) {
+    app.use(
+      createReminderRouter({
+        reminderService: dependencies.reminderService,
+        authMiddleware: localAuthMiddleware,
+      })
+    );
+  }
+  if (dependencies.researchService !== undefined) {
+    app.use(
+      createResearchRouter({
+        researchService: dependencies.researchService,
+        authMiddleware: localAuthMiddleware,
+      })
+    );
+  }
+  if (dependencies.exportService !== undefined || dependencies.importService !== undefined) {
+    app.use(
+      createImportExportRouter({
+        exportService: dependencies.exportService,
+        importService: dependencies.importService,
+        authMiddleware: localAuthMiddleware,
+      })
+    );
+  }
+  if (dependencies.syncService !== undefined) {
+    app.use(
+      createSyncRouter({
+        syncService: dependencies.syncService,
+        authMiddleware: deviceAuthMiddleware,
+      })
+    );
+  }
+}
 
 function isLoopbackOrigin(value) {
   if (typeof value !== 'string' || value.length > 256) return false;
@@ -39,7 +106,18 @@ function createApp({
   jsonLimit = '100kb',
   closeHandlers = [],
   routeDependencies = {},
+  dashboardDirectory,
 } = {}) {
+  if (
+    dashboardDirectory !== undefined &&
+    (typeof dashboardDirectory !== 'string' ||
+      dashboardDirectory.length < 1 ||
+      dashboardDirectory.length > 32_768 ||
+      dashboardDirectory.includes('\0') ||
+      !path.isAbsolute(dashboardDirectory))
+  ) {
+    throw new TypeError('Dashboard directory is invalid');
+  }
   if (
     typeof health !== 'function' ||
     typeof generateRequestId !== 'function' ||
@@ -98,8 +176,12 @@ function createApp({
     next();
   });
   app.use(express.json({ limit: jsonLimit, strict: true, type: 'application/json' }));
+  if (dashboardDirectory !== undefined) {
+    app.use(createDashboardRouter({ dashboardDirectory }));
+  }
   app.use(createHealthRouter({ health }));
   app.use(createContractRouter(routeDependencies));
+  mountStage3Routes(app, routeDependencies);
   app.use('/api', createCompatibilityRouter({ health, ...routeDependencies }));
   for (const route of routes) {
     if (

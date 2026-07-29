@@ -159,6 +159,35 @@ test('rotating an install credential invalidates the old token and replaces the 
   );
 });
 
+test('install authorization is retrieved explicitly from the protected store without reprovisioning', async t => {
+  const fixture = await createFixture();
+  t.after(() => fixture.cleanup());
+  const service = await createInstallService(fixture);
+  const provisioned = await service.provision({ profileId: PROFILE_ID });
+
+  assert.equal(
+    await service.getAuthorization({
+      credentialId: provisioned.credentialId,
+      profileId: PROFILE_ID,
+    }),
+    `Bearer ${provisioned.token}`
+  );
+  assert.equal(fixture.db.prepare('SELECT COUNT(*) FROM client_credentials').pluck().get(), 1);
+
+  const secretRef = fixture.db
+    .prepare('SELECT secret_ref FROM client_credentials WHERE id = ?')
+    .pluck()
+    .get(provisioned.credentialId);
+  await fixture.secrets.store.delete(secretRef);
+  await assert.rejects(
+    service.getAuthorization({
+      credentialId: provisioned.credentialId,
+      profileId: PROFILE_ID,
+    }),
+    error => error.code === 'AUTH_SECRET_STORE_FAILED' && !error.message.includes(provisioned.token)
+  );
+});
+
 test('browser sessions are short-lived, loopback-bound, HttpOnly, SameSite Strict, and CSRF protected', async t => {
   const fixture = await createFixture();
   t.after(() => fixture.cleanup());

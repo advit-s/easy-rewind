@@ -1,23 +1,114 @@
 {
   "appId": "com.easyrewind.desktop",
-  "productName": "easy-rewind",
+  "productName": "Easy Rewind",
+  "asar": true,
+  "asarUnpack": ["node_modules/better-sqlite3/**/*", "node_modules/**/*.node"],
   "directories": {
-    "output": "dist"
+    "output": "../dist",
+    "buildResources": "."
   },
+  "files": [
+    {
+      "from": ".",
+      "to": ".",
+      "filter": ["package.json"]
+    },
+    {
+      "from": ".",
+      "to": "desktop",
+      "filter": [
+        "*.js",
+        "*.html",
+        "*.css",
+        "*.svg",
+        "assets/**/*",
+        "!**/*.test.*",
+        "!**/*.map",
+        "!**/*.{db,sqlite,sqlite3}",
+        "!**/*.{db,sqlite,sqlite3}-{wal,shm,journal}",
+        "!**/*-{wal,shm,journal}",
+        "!**/*{settings,secrets,credentials}*.json",
+        "!**/.env{,.*}",
+        "!**/*.{log,pem,key}",
+        "!**/{test,tests,__tests__,coverage,dist,build,.cache,.npm,.yarn,.pnpm-store,legacy-backup,quarantine,migration-work,logs,exports,tmp,temp}/**/*"
+      ]
+    },
+    {
+      "from": "../backend",
+      "to": "backend",
+      "filter": [
+        "package.json",
+        "server.js",
+        "src/**/*",
+        "!**/*.test.*",
+        "!**/*.map",
+        "!**/*.{db,sqlite,sqlite3}",
+        "!**/*.{db,sqlite,sqlite3}-{wal,shm,journal}",
+        "!**/*-{wal,shm,journal}",
+        "!**/*{settings,secrets,credentials}*.json",
+        "!**/.env{,.*}",
+        "!**/*.{log,pem,key}",
+        "!**/{test,tests,__tests__,coverage,dist,build,.cache,.npm,.yarn,.pnpm-store,legacy-backup,quarantine,migration-work,logs,exports,tmp,temp}/**/*"
+      ]
+    },
+    {
+      "from": "../frontend",
+      "to": "frontend",
+      "filter": [
+        "dashboard.html",
+        "js/**/*",
+        "styles/**/*",
+        "!**/*.test.*",
+        "!**/*.map",
+        "!**/*.{db,sqlite,sqlite3}",
+        "!**/*.{db,sqlite,sqlite3}-{wal,shm,journal}",
+        "!**/*-{wal,shm,journal}",
+        "!**/*{settings,secrets,credentials}*.json",
+        "!**/.env{,.*}",
+        "!**/*.{log,pem,key}",
+        "!**/{test,tests,__tests__,coverage,dist,build,.cache,.npm,.yarn,.pnpm-store,legacy-backup,quarantine,migration-work,logs,exports,tmp,temp}/**/*"
+      ]
+    },
+    {
+      "from": "../packages/contracts",
+      "to": "packages/contracts",
+      "filter": [
+        "package.json",
+        "src/**/*",
+        "schema/**/*",
+        "!**/*.test.*",
+        "!**/*.map",
+        "!**/*.{db,sqlite,sqlite3}",
+        "!**/*.{db,sqlite,sqlite3}-{wal,shm,journal}",
+        "!**/*-{wal,shm,journal}",
+        "!**/*{settings,secrets,credentials}*.json",
+        "!**/.env{,.*}",
+        "!**/*.{log,pem,key}",
+        "!**/{test,tests,__tests__,coverage,dist,build,.cache,.npm,.yarn,.pnpm-store,legacy-backup,quarantine,migration-work,logs,exports,tmp,temp}/**/*"
+      ]
+    }
+  ],
   "win": {
     "target": ["nsis", "portable"],
-    "icon": "tray-icon.png",
-    "artifactName": "easy-rewind-Setup-${version}.${ext}"
+    "icon": "assets/icon.ico"
   },
   "nsis": {
+    "artifactName": "Easy-Rewind-UNSIGNED-Setup-${version}-${arch}.${ext}",
     "oneClick": false,
     "allowToChangeInstallationDirectory": true,
     "runAfterFinish": true,
     "createDesktopShortcut": true,
-    "shortcutName": "easy-rewind",
-    "installerIcon": "tray-icon.png"
+    "shortcutName": "Easy Rewind",
+    "perMachine": false,
+    "installerIcon": "assets/icon.ico",
+    "uninstallerIcon": "assets/icon.ico"
+  },
+  "portable": {
+    "artifactName": "Easy-Rewind-UNSIGNED-Portable-${version}-${arch}.${ext}",
+    "requestExecutionLevel": "user"
   },
   "extraMetadata": {
-    "main": "main.js"
+    "main": "desktop/bootstrap.js",
+    "productName": "Easy Rewind"
   }
 }

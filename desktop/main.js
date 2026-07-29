@@ -1,471 +1,585 @@
-/**
- * easy-rewind Desktop App — Main Process
- *
- * Windows system tray app with:
- * - Global shortcut (Win+Shift+Space / Ctrl+Shift+Space) → overlay window
- * - System tray icon with context menu
- * - Desktop notifications for due reminders
- * - Periodic reminder check (every 2 minutes)
- * - Quick capture + search without opening browser
- */
+'use strict';
 
-const {
-  app,
-  BrowserWindow,
-  Tray,
-  Menu,
-  Notification,
-  globalShortcut,
-  nativeImage,
-  clipboard,
-  ipcMain,
-  safeStorage,
-} = require('electron');
-const path = require('path');
-const fs = require('fs');
-const http = require('http');
 const { createEmbeddedBackendLifecycle } = require('./backend-lifecycle');
+const {
+  DESKTOP_LOCAL_API_BASE_URL,
+  LOCAL_API_MAX_RESPONSE_BYTES,
+  createLocalApiClient,
+} = require('./local-api-client');
+const { createMainProcessController } = require('./main-process-controller');
+const { createDesktopReminderOutboxAdapter } = require('./reminder-outbox-adapter');
+const { resolveDesktopResourcePaths } = require('./resource-paths');
+const { createWindowsPlatformAdapters } = require('./windows-platform-adapters');
 
-// ─────────────────────────────────────────────
-// CONFIG
-// ─────────────────────────────────────────────
-const REMINDER_CHECK_INTERVAL = 2 * 60 * 1000; // 2 minutes
-const isDev = process.argv.includes('--dev');
+const DESKTOP_DASHBOARD_URL = `${DESKTOP_LOCAL_API_BASE_URL}/dashboard`;
+const REMINDER_OUTBOX_POLL_INTERVAL_MS = 30_000;
+const REMINDER_OUTBOX_PATH = '/api/reminder-deliveries?channel=desktop&limit=25';
+const OVERLAY_SHORTCUTS = Object.freeze(['Ctrl+Shift+Space', 'Alt+Shift+E']);
+const SAFE_IDENTIFIER = /^[A-Za-z0-9._~-]{1,256}$/;
 
-// ─────────────────────────────────────────────
-// STATE
-// ─────────────────────────────────────────────
-let tray = null;
-let overlayWindow = null;
-let reminderInterval = null;
-let userId = null;
-let desktopSettings = { apiBase: '', apiKey: '', aiModel: 'gemini-2.5-flash', reminderMinutes: 60 };
-
-let backendRunning = false;
-
-function loadWindowsPlatformAdapters() {
-  return require('./windows-platform-adapters').createWindowsPlatformAdapters({
-    localAppData: process.env.LOCALAPPDATA,
-    safeStorage,
-  });
-}
-
-const backendLifecycle = createEmbeddedBackendLifecycle({
-  createPlatformAdapters: loadWindowsPlatformAdapters,
-  electronApp: app,
-});
-
-function getEffectiveApiBase() {
-  return desktopSettings.apiBase && desktopSettings.apiBase.trim()
-    ? desktopSettings.apiBase.replace(/\/+$/, '')
-    : 'http://127.0.0.1:3210';
-}
-
-const DESKTOP_SETTINGS_PATH = path.join(app.getPath('userData'), 'desktop-settings.json');
-
-function loadDesktopSettings() {
-  try {
-    if (fs.existsSync(DESKTOP_SETTINGS_PATH)) {
-      const raw = fs.readFileSync(DESKTOP_SETTINGS_PATH, 'utf8');
-      const saved = JSON.parse(raw);
-      desktopSettings = { ...desktopSettings, ...saved };
-    }
-  } catch (_) {}
-}
-
-function saveDesktopSettings() {
-  try {
-    const dir = path.dirname(DESKTOP_SETTINGS_PATH);
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(DESKTOP_SETTINGS_PATH, JSON.stringify(desktopSettings, null, 2));
-  } catch (_) {}
-}
-
-// ─────────────────────────────────────────────
-// BACKEND SERVER MANAGEMENT
-// ─────────────────────────────────────────────
-
-async function startBackend() {
-  if (backendLifecycle.state() === 'running') return;
-  console.log('[Backend] Starting embedded shared runtime...');
-  try {
-    await backendLifecycle.start();
-    backendRunning = true;
-    console.log('[Backend] Shared runtime is ready');
-  } catch (error) {
-    console.error(`[Backend] Startup blocked safely (${error?.code || 'BACKEND_START_FAILED'}).`);
-    backendRunning = false;
+class DesktopStartupError extends Error {
+  constructor() {
+    super('Easy Rewind could not start safely.');
+    this.name = 'DesktopStartupError';
+    this.code = 'DESKTOP_START_FAILED';
   }
-  if (typeof updateTrayMenu === 'function') updateTrayMenu();
 }
 
-async function stopBackend() {
-  await backendLifecycle.stop();
-  backendRunning = false;
-  if (typeof updateTrayMenu === 'function') updateTrayMenu();
+function isObject(value) {
+  return value !== null && typeof value === 'object';
 }
 
-async function restartBackend() {
-  await stopBackend();
-  await startBackend();
+function stableOutboxDelivery(value) {
+  if (!isObject(value) || !isObject(value.delivery) || !isObject(value.reminder)) {
+    return false;
+  }
+  const delivery = value.delivery;
+  const reminder = value.reminder;
+  return (
+    typeof delivery.id === 'string' &&
+    SAFE_IDENTIFIER.test(delivery.id) &&
+    delivery.state === 'delivered' &&
+    typeof reminder.id === 'string' &&
+    SAFE_IDENTIFIER.test(reminder.id) &&
+    Number.isSafeInteger(reminder.revision) &&
+    reminder.revision >= 1 &&
+    typeof reminder.title === 'string' &&
+    reminder.title.length >= 1 &&
+    reminder.title.length <= 128 &&
+    !/[\u0000-\u001f\u007f]/.test(reminder.title) &&
+    typeof reminder.body === 'string' &&
+    reminder.body.length <= 1024 &&
+    !/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(reminder.body)
+  );
 }
 
-// ─────────────────────────────────────────────
-// UTILITY: API Calls
-// ─────────────────────────────────────────────
-function apiCall(path, options = {}) {
-  return new Promise((resolve, reject) => {
-    const effectiveBase = getEffectiveApiBase() + '/api';
-    const url = new URL(`${effectiveBase}${path}`);
-    const httpOptions = {
-      hostname: url.hostname,
-      port: url.port,
-      path: url.pathname + url.search,
-      method: options.method || 'GET',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-user-id': userId || 'desktop-user',
-        ...(options.headers || {}),
-      },
-    };
+function createElectronHttpRequest({ net } = {}) {
+  if (!isObject(net) || typeof net.request !== 'function') {
+    throw new TypeError('Electron net adapter is unavailable');
+  }
 
-    const req = http.request(httpOptions, res => {
-      let data = '';
-      res.on('data', chunk => (data += chunk));
-      res.on('end', () => {
+  return function electronHttpRequest(options = {}) {
+    if (
+      !isObject(options) ||
+      typeof options.url !== 'string' ||
+      typeof options.method !== 'string' ||
+      !isObject(options.headers) ||
+      !Number.isSafeInteger(options.maxResponseBytes) ||
+      options.maxResponseBytes < 1 ||
+      options.maxResponseBytes > LOCAL_API_MAX_RESPONSE_BYTES ||
+      !isObject(options.signal)
+    ) {
+      return Promise.reject(new TypeError('Electron request options are invalid'));
+    }
+
+    let parsed;
+    try {
+      parsed = new URL(options.url);
+    } catch {
+      return Promise.reject(new TypeError('Electron request URL is invalid'));
+    }
+    if (
+      parsed.origin !== DESKTOP_LOCAL_API_BASE_URL ||
+      parsed.username !== '' ||
+      parsed.password !== '' ||
+      parsed.hash !== ''
+    ) {
+      return Promise.reject(new TypeError('Electron request URL is invalid'));
+    }
+    if (options.body !== undefined && Buffer.byteLength(options.body, 'utf8') > 1024 * 1024) {
+      return Promise.reject(new RangeError('Electron request body is too large'));
+    }
+
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      let request;
+
+      const finish = callback => value => {
+        if (settled) return;
+        settled = true;
+        options.signal.removeEventListener?.('abort', onAbort);
+        callback(value);
+      };
+      const fail = finish(() => reject(new Error('Electron local request failed')));
+      const succeed = finish(resolve);
+      const onAbort = () => {
         try {
-          const parsed = JSON.parse(data);
-          if (res.statusCode >= 200 && res.statusCode < 300) resolve(parsed);
-          else reject(new Error(parsed.error || `HTTP ${res.statusCode}`));
+          request?.abort();
         } catch {
-          reject(new Error('Invalid response from server'));
+          // The stable failure below is the only observable result.
         }
-      });
-    });
+        fail();
+      };
 
-    req.on('error', err => reject(new Error(`Cannot reach server: ${err.message}`)));
+      if (options.signal.aborted) {
+        onAbort();
+        return;
+      }
 
-    if (options.body) {
-      req.write(JSON.stringify(options.body));
-    }
-    req.end();
-  });
-}
-
-// ─────────────────────────────────────────────
-// CREATE OVERLAY WINDOW
-// ─────────────────────────────────────────────
-function createOverlayWindow() {
-  if (overlayWindow && !overlayWindow.isDestroyed()) {
-    overlayWindow.show();
-    overlayWindow.focus();
-    return;
-  }
-
-  overlayWindow = new BrowserWindow({
-    width: 420,
-    height: 580,
-    resizable: false,
-    skipTaskbar: true,
-    alwaysOnTop: true,
-    frame: false,
-    transparent: true,
-    backgroundColor: '#0f0f1a',
-    show: false,
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-
-  overlayWindow.loadFile(path.join(__dirname, 'overlay.html'));
-
-  // Show with fade-in
-  overlayWindow.once('ready-to-show', () => {
-    overlayWindow.show();
-    overlayWindow.focus();
-  });
-
-  // Hide on blur (click outside)
-  overlayWindow.on('blur', () => {
-    if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.hide();
-    }
-  });
-
-  // Handle IPC from renderer
-  ipcMain.on('hide-overlay', () => {
-    if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.hide();
-    }
-  });
-
-  ipcMain.on('open-in-browser', (event, url) => {
-    if (url) require('electron').shell.openExternal(url);
-    if (overlayWindow && !overlayWindow.isDestroyed()) {
-      overlayWindow.hide();
-    }
-  });
-
-  ipcMain.handle('api-call', async (event, { path, method, body }) => {
-    try {
-      return await apiCall(path, { method, body });
-    } catch (err) {
-      return { error: err.message };
-    }
-  });
-
-  ipcMain.handle('get-settings', () => ({ ...desktopSettings }));
-  ipcMain.handle('set-settings', (event, newSettings) => {
-    desktopSettings = { ...desktopSettings, ...newSettings };
-    saveDesktopSettings();
-    return { ...desktopSettings };
-  });
-}
-
-// ─────────────────────────────────────────────
-// TOGGLE OVERLAY
-// ─────────────────────────────────────────────
-function toggleOverlay() {
-  if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) {
-    overlayWindow.hide();
-  } else {
-    createOverlayWindow();
-  }
-}
-
-// ─────────────────────────────────────────────
-// CHECK REMINDERS
-// ─────────────────────────────────────────────
-async function checkReminders() {
-  try {
-    const data = await apiCall('/reminders?due=true&limit=5');
-    if (data.reminders && data.reminders.length > 0) {
-      for (const reminder of data.reminders) {
-        showDesktopNotification(reminder.title || 'Reminder', reminder.message || '', reminder);
-        // Acknowledge
-        await apiCall(`/reminders/${reminder.id}`, {
-          method: 'PATCH',
-          body: { reminded: true },
+      try {
+        request = net.request({
+          method: options.method,
+          redirect: 'error',
+          url: parsed.toString(),
         });
-      }
-    }
-  } catch (err) {
-    // Silently fail — server might be offline
-  }
-  if (tray) updateTrayMenu();
-}
-
-// ─────────────────────────────────────────────
-// DESKTOP NOTIFICATION
-// ─────────────────────────────────────────────
-function showDesktopNotification(title, body, data = {}) {
-  const notification = new Notification({
-    title: `⏪ ${title}`,
-    body: body || 'You have a pending reminder in easy-rewind.',
-    icon: path.join(__dirname, 'tray-icon.png'),
-    silent: false,
-    hasReply: false,
-  });
-
-  notification.on('click', () => {
-    // Open the overlay when notification is clicked
-    createOverlayWindow();
-  });
-
-  notification.show();
-}
-
-function updateTrayMenu() {
-  if (!tray) return;
-
-  const backendStatus = backendRunning ? '✅ Backend Running' : '❌ Backend Stopped';
-
-  const template = [
-    {
-      label: '🔍 Quick Search & Capture',
-      click: () => createOverlayWindow(),
-    },
-    { type: 'separator' },
-    {
-      label: backendStatus,
-      enabled: false,
-    },
-    {
-      label: backendRunning ? '🔄 Restart Backend' : '▶ Start Backend',
-      click: () => {
-        if (backendRunning) {
-          restartBackend();
-        } else {
-          startBackend();
+        if (
+          !isObject(request) ||
+          typeof request.on !== 'function' ||
+          typeof request.setHeader !== 'function' ||
+          typeof request.end !== 'function'
+        ) {
+          fail();
+          return;
         }
-      },
-    },
-    { type: 'separator' },
-    {
-      label: '📊 Open Dashboard',
-      click: () => require('electron').shell.openExternal(`${getEffectiveApiBase()}/dashboard`),
-    },
-    { type: 'separator' },
-    {
-      label: 'Check Reminders Now',
-      click: () => checkReminders(),
-    },
-    { type: 'separator' },
-    {
-      label: 'Quit easy-rewind',
-      click: () => {
-        app.isQuitting = true;
-        app.quit();
-      },
-    },
-  ];
 
-  tray.setContextMenu(Menu.buildFromTemplate(template));
-}
+        options.signal.addEventListener?.('abort', onAbort, { once: true });
+        request.on('redirect', event => {
+          event?.preventDefault?.();
+          try {
+            request.abort?.();
+          } catch {
+            // The stable failure below is the only observable result.
+          }
+          fail();
+        });
+        request.on('error', fail);
+        request.on('response', response => {
+          if (
+            !isObject(response) ||
+            typeof response.on !== 'function' ||
+            !Number.isInteger(response.statusCode) ||
+            !isObject(response.headers)
+          ) {
+            fail();
+            return;
+          }
+          const chunks = [];
+          let size = 0;
+          response.on('data', value => {
+            if (settled) return;
+            const chunk = Buffer.isBuffer(value) ? value : Buffer.from(value);
+            size += chunk.byteLength;
+            if (size > options.maxResponseBytes) {
+              try {
+                request.abort?.();
+              } catch {
+                // The stable failure below is the only observable result.
+              }
+              fail();
+              return;
+            }
+            chunks.push(chunk);
+          });
+          response.on('error', fail);
+          response.on('end', () => {
+            if (settled) return;
+            succeed({
+              body: Buffer.concat(chunks, size),
+              headers: response.headers,
+              statusCode: response.statusCode,
+            });
+          });
+        });
 
-// ─────────────────────────────────────────────
-// CREATE SYSTEM TRAY
-// ─────────────────────────────────────────────
-function createTray() {
-  // Create a simple 16x16 tray icon from a nativeImage
-  // We'll generate a small purple dot as fallback
-  const iconSize = 16;
-  const canvas = nativeImage.createEmpty();
-  // Use a generated PNG icon
-  let trayIcon;
-
-  try {
-    trayIcon = nativeImage.createFromPath(path.join(__dirname, 'tray-icon.svg'));
-    if (trayIcon.isEmpty()) throw new Error('No icon file');
-  } catch {
-    // Create a minimal programmatic icon (16x16 purple square)
-    const size = 16;
-    const buf = Buffer.alloc(size * size * 4);
-    for (let i = 0; i < size * size; i++) {
-      const offset = i * 4;
-      buf[offset] = 124; // R
-      buf[offset + 1] = 58; // G
-      buf[offset + 2] = 237; // B
-      buf[offset + 3] = 255; // A
-    }
-    trayIcon = nativeImage.createFromBuffer(buf, { width: size, height: size });
-  }
-
-  tray = new Tray(trayIcon);
-  tray.setToolTip('easy-rewind — Press Ctrl+Shift+Space to open');
-
-  updateTrayMenu();
-
-  // Double-click tray → open overlay
-  tray.on('double-click', () => {
-    createOverlayWindow();
-  });
-}
-
-// ─────────────────────────────────────────────
-// APP LIFECYCLE
-// ─────────────────────────────────────────────
-app.whenReady().then(async () => {
-  loadDesktopSettings();
-
-  // Auto-start the backend server
-  await startBackend();
-  // Register global shortcut
-  const shortcut = globalShortcut.register('Ctrl+Shift+Space', () => {
-    toggleOverlay();
-  });
-
-  if (!shortcut) {
-    console.warn('Global shortcut registration failed (may conflict with another app)');
-  }
-
-  // Also register Alt+Space as alternative
-  globalShortcut.register('Alt+Shift+E', () => {
-    toggleOverlay();
-  });
-
-  // Create tray
-  createTray();
-
-  // Start reminder polling
-  reminderInterval = setInterval(checkReminders, REMINDER_CHECK_INTERVAL);
-  // Initial check after 5 seconds
-  setTimeout(checkReminders, 5000);
-
-  // Get or create user ID (simple JSON store — avoids electron-store ESM issues)
-  const storePath = path.join(app.getPath('userData'), 'config.json');
-  let config = {};
-  try {
-    const raw = fs.readFileSync(storePath, 'utf8');
-    config = JSON.parse(raw);
-  } catch {
-    /* first run — empty config */
-  }
-  userId = config.easy_rewind_user_id;
-  if (!userId) {
-    userId = 'desktop_' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
-    config.easy_rewind_user_id = userId;
-    try {
-      const dir = path.dirname(storePath);
-      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(storePath, JSON.stringify(config, null, 2));
-    } catch (err) {
-      console.warn('[Store] Could not save config:', err.message);
-    }
-  }
-
-  console.log('✅ easy-rewind Desktop App running');
-  console.log(`   User ID: ${userId.slice(0, 20)}...`);
-  console.log('   Shortcut: Ctrl+Shift+Space to open overlay');
-
-  // Resolve canonical shared user ID from the server
-  fetch(`${getEffectiveApiBase()}/api/session`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id: userId, client_type: 'desktop' }),
-  })
-    .then(r => r.json())
-    .then(session => {
-      if (session.user_id && session.user_id !== userId) {
-        userId = session.user_id;
-        config.easy_rewind_user_id = userId;
-        try {
-          fs.writeFileSync(storePath, JSON.stringify(config, null, 2));
-        } catch (err) {
-          console.warn('[Store] Could not save session user_id:', err.message);
+        for (const [name, value] of Object.entries(options.headers)) {
+          request.setHeader(name, value);
         }
-        console.log(`   Canonical user_id resolved: ${userId.slice(0, 20)}...`);
+        if (options.body !== undefined) {
+          if (typeof request.write !== 'function') {
+            fail();
+            return;
+          }
+          request.write(options.body);
+        }
+        request.end();
+      } catch {
+        fail();
       }
-    })
-    .catch(() => {
-      console.log('[Session] Could not reach server, using local user ID.');
+    });
+  };
+}
+
+function assertElectron(electron) {
+  if (
+    !isObject(electron) ||
+    !isObject(electron.app) ||
+    typeof electron.app.requestSingleInstanceLock !== 'function' ||
+    typeof electron.app.whenReady !== 'function' ||
+    typeof electron.app.on !== 'function' ||
+    typeof electron.app.removeListener !== 'function' ||
+    typeof electron.app.quit !== 'function' ||
+    typeof electron.BrowserWindow !== 'function' ||
+    typeof electron.Tray !== 'function' ||
+    typeof electron.Notification !== 'function' ||
+    (typeof electron.Menu !== 'object' && typeof electron.Menu !== 'function') ||
+    typeof electron.Menu.buildFromTemplate !== 'function' ||
+    !isObject(electron.nativeImage) ||
+    typeof electron.nativeImage.createFromPath !== 'function' ||
+    !isObject(electron.globalShortcut) ||
+    typeof electron.globalShortcut.register !== 'function' ||
+    typeof electron.globalShortcut.unregisterAll !== 'function' ||
+    !isObject(electron.ipcMain) ||
+    !isObject(electron.shell) ||
+    typeof electron.shell.openExternal !== 'function'
+  ) {
+    throw new TypeError('Electron main-process dependencies are invalid');
+  }
+}
+
+function createDesktopMain(configuration = {}) {
+  if (!isObject(configuration)) throw new TypeError('Desktop main configuration is invalid');
+  const electron = configuration.electron;
+  assertElectron(electron);
+
+  const processLike = configuration.processLike ?? process;
+  const desktopDirectory = configuration.desktopDirectory ?? __dirname;
+  const fileSystem = configuration.fileSystem;
+  const resolveResourcePaths = configuration.resolveResourcePaths ?? resolveDesktopResourcePaths;
+  const platformFactory = configuration.createPlatformAdapters ?? (options => createWindowsPlatformAdapters(options));
+  const backendFactory = configuration.createBackendLifecycle ?? createEmbeddedBackendLifecycle;
+  const localClientFactory = configuration.createLocalClient ?? createLocalApiClient;
+  const controllerFactory = configuration.createController ?? createMainProcessController;
+  const reminderOutboxFactory = configuration.createReminderOutboxAdapter ?? createDesktopReminderOutboxAdapter;
+  const httpRequest =
+    configuration.httpRequest ??
+    createElectronHttpRequest({
+      net: electron.net,
     });
 
-  // Auto-open overlay on first launch
-  if (isDev) {
-    setTimeout(createOverlayWindow, 1000);
+  for (const factory of [
+    resolveResourcePaths,
+    platformFactory,
+    backendFactory,
+    localClientFactory,
+    controllerFactory,
+    reminderOutboxFactory,
+    httpRequest,
+  ]) {
+    if (typeof factory !== 'function') {
+      throw new TypeError('Desktop main factories are invalid');
+    }
   }
-});
 
-app.on('window-all-closed', () => {
-  // Don't quit — we're a tray app
-});
+  let backendLifecycle;
+  let controller;
+  let overlayWindow;
+  let resourcePaths;
+  let runPromise;
+  let stopPromise;
+  let tray;
+  let lifecycleState = 'created';
+  let allowQuit = false;
+  let quitRequested = false;
+  let listenersRegistered = false;
 
-let backendShutdownComplete = false;
+  function hideOverlay() {
+    if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.hide();
+  }
 
-app.on('before-quit', event => {
-  app.isQuitting = true;
-  if (backendShutdownComplete) return;
-  event.preventDefault();
-  void stopBackend().finally(() => {
-    backendShutdownComplete = true;
-    app.quit();
+  function createOverlayWindow() {
+    if (lifecycleState !== 'running' || controller === undefined) return undefined;
+    if (overlayWindow && !overlayWindow.isDestroyed()) {
+      overlayWindow.show();
+      overlayWindow.focus();
+      return overlayWindow;
+    }
+
+    overlayWindow = new electron.BrowserWindow({
+      alwaysOnTop: true,
+      backgroundColor: '#0f0f1a',
+      frame: false,
+      height: 580,
+      resizable: false,
+      show: false,
+      skipTaskbar: true,
+      transparent: true,
+      webPreferences: {
+        allowRunningInsecureContent: false,
+        contextIsolation: true,
+        nodeIntegration: false,
+        preload: resourcePaths.preloadPath,
+        sandbox: true,
+        webSecurity: true,
+        webviewTag: false,
+      },
+      width: 420,
+    });
+    controller.configureWindow(overlayWindow);
+    void Promise.resolve(overlayWindow.loadFile(resourcePaths.overlayPath)).catch(() => {
+      overlayWindow?.close();
+    });
+    overlayWindow.once('ready-to-show', () => {
+      if (overlayWindow && !overlayWindow.isDestroyed()) {
+        overlayWindow.show();
+        overlayWindow.focus();
+      }
+    });
+    overlayWindow.on('blur', hideOverlay);
+    overlayWindow.once('closed', () => {
+      overlayWindow = undefined;
+    });
+    return overlayWindow;
+  }
+
+  function toggleOverlay() {
+    if (overlayWindow && !overlayWindow.isDestroyed() && overlayWindow.isVisible()) {
+      overlayWindow.hide();
+      return;
+    }
+    createOverlayWindow();
+  }
+
+  function openDashboard() {
+    return Promise.resolve()
+      .then(() => electron.shell.openExternal(DESKTOP_DASHBOARD_URL))
+      .catch(() => undefined);
+  }
+
+  function trayIcon() {
+    const icon = electron.nativeImage.createFromPath(resourcePaths.iconPath);
+    if (icon && typeof icon.isEmpty === 'function' && !icon.isEmpty()) return icon;
+    if (typeof electron.nativeImage.createFromBuffer !== 'function') return icon;
+    const size = 16;
+    const pixels = Buffer.alloc(size * size * 4);
+    for (let offset = 0; offset < pixels.length; offset += 4) {
+      pixels[offset] = 124;
+      pixels[offset + 1] = 58;
+      pixels[offset + 2] = 237;
+      pixels[offset + 3] = 255;
+    }
+    return electron.nativeImage.createFromBuffer(pixels, {
+      height: size,
+      width: size,
+    });
+  }
+
+  function createTray() {
+    tray = new electron.Tray(trayIcon());
+    tray.setToolTip('Easy Rewind');
+    tray.setContextMenu(
+      electron.Menu.buildFromTemplate([
+        {
+          click: createOverlayWindow,
+          label: 'Quick Search & Capture',
+        },
+        { type: 'separator' },
+        {
+          click: openDashboard,
+          label: 'Open Dashboard',
+        },
+        { type: 'separator' },
+        {
+          click: () => electron.app.quit(),
+          label: 'Quit Easy Rewind',
+        },
+      ])
+    );
+    tray.on('double-click', createOverlayWindow);
+  }
+
+  function removeAppListeners() {
+    if (!listenersRegistered) return;
+    electron.app.removeListener('before-quit', onBeforeQuit);
+    electron.app.removeListener('second-instance', createOverlayWindow);
+    electron.app.removeListener('window-all-closed', keepTrayApplicationRunning);
+    listenersRegistered = false;
+  }
+
+  function stop() {
+    if (stopPromise !== undefined) return stopPromise;
+    stopPromise = Promise.resolve()
+      .then(() => {
+        removeAppListeners();
+        electron.globalShortcut.unregisterAll();
+        controller?.stop();
+        if (overlayWindow && !overlayWindow.isDestroyed()) overlayWindow.close();
+        overlayWindow = undefined;
+        if (tray !== undefined) {
+          tray.destroy();
+          tray = undefined;
+        }
+      })
+      .then(() => backendLifecycle?.stop())
+      .catch(() => undefined)
+      .finally(() => {
+        lifecycleState = 'stopped';
+      });
+    return stopPromise;
+  }
+
+  function onBeforeQuit(event) {
+    if (allowQuit) return;
+    event?.preventDefault?.();
+    if (quitRequested) return;
+    quitRequested = true;
+    void stop().finally(() => {
+      allowQuit = true;
+      electron.app.quit();
+    });
+  }
+
+  function keepTrayApplicationRunning() {}
+
+  function registerAppListeners() {
+    if (listenersRegistered) return;
+    electron.app.on('before-quit', onBeforeQuit);
+    electron.app.on('second-instance', createOverlayWindow);
+    electron.app.on('window-all-closed', keepTrayApplicationRunning);
+    listenersRegistered = true;
+  }
+
+  function registerShortcuts() {
+    for (const accelerator of OVERLAY_SHORTCUTS) {
+      electron.globalShortcut.register(accelerator, toggleOverlay);
+    }
+  }
+
+  function startReadyApplication() {
+    resourcePaths = resolveResourcePaths({
+      desktopDirectory,
+      electronApp: electron.app,
+      fileSystem,
+      processLike,
+    });
+    const platformAdapters = platformFactory({
+      localAppData: processLike.env?.LOCALAPPDATA,
+      safeStorage: electron.safeStorage,
+    });
+    const reminderNotifier = reminderOutboxFactory();
+    if (!isObject(platformAdapters) || !isObject(reminderNotifier) || typeof reminderNotifier.deliver !== 'function') {
+      throw new TypeError('Desktop platform adapters are invalid');
+    }
+    const embeddedPlatformAdapters = {
+      ...platformAdapters,
+      reminderNotifier,
+    };
+    backendLifecycle = backendFactory({
+      desktopDirectory,
+      electronApp: electron.app,
+      fileSystem,
+      platformAdapters: embeddedPlatformAdapters,
+      processLike,
+      resolveResourcePaths,
+    });
+    if (
+      !isObject(backendLifecycle) ||
+      typeof backendLifecycle.start !== 'function' ||
+      typeof backendLifecycle.stop !== 'function' ||
+      typeof backendLifecycle.getInstallAuthorization !== 'function'
+    ) {
+      throw new TypeError('Embedded backend lifecycle is invalid');
+    }
+    return Promise.resolve()
+      .then(() => backendLifecycle.start())
+      .then(() => {
+        const localApiClient = localClientFactory({
+          baseUrl: DESKTOP_LOCAL_API_BASE_URL,
+          getAuthorization: () => backendLifecycle.getInstallAuthorization(),
+          httpRequest,
+        });
+        async function pollNotifications() {
+          let result;
+          try {
+            result = await localApiClient.request(REMINDER_OUTBOX_PATH, {
+              method: 'GET',
+            });
+          } catch {
+            return;
+          }
+          const deliveries = result?.data?.deliveries;
+          if (
+            result?.state !== 'ready' ||
+            result.status !== 200 ||
+            !Array.isArray(deliveries) ||
+            deliveries.length > 25
+          ) {
+            return;
+          }
+          for (const delivery of deliveries) {
+            if (!stableOutboxDelivery(delivery)) continue;
+            try {
+              await controller.deliverNotification(delivery);
+            } catch {
+              // Presentation failures remain retryable in the durable outbox.
+            }
+          }
+        }
+        controller = controllerFactory({
+          createNotification: options =>
+            new electron.Notification({
+              ...options,
+              icon: resourcePaths.iconPath,
+            }),
+          hideOverlay,
+          ipcMain: electron.ipcMain,
+          localApiClient,
+          pollIntervalMs: REMINDER_OUTBOX_POLL_INTERVAL_MS,
+          pollNotifications,
+          shell: electron.shell,
+        });
+        if (
+          !isObject(controller) ||
+          typeof controller.start !== 'function' ||
+          typeof controller.stop !== 'function' ||
+          typeof controller.configureWindow !== 'function'
+        ) {
+          throw new TypeError('Main-process controller is invalid');
+        }
+        controller.start();
+        void pollNotifications();
+        registerShortcuts();
+        createTray();
+        lifecycleState = 'running';
+        return application;
+      });
+  }
+
+  function run() {
+    if (runPromise !== undefined) return runPromise;
+    runPromise = Promise.resolve().then(async () => {
+      if (!electron.app.requestSingleInstanceLock()) {
+        lifecycleState = 'stopped';
+        allowQuit = true;
+        electron.app.quit();
+        return application;
+      }
+
+      lifecycleState = 'starting';
+      registerAppListeners();
+      try {
+        await electron.app.whenReady();
+        return await startReadyApplication();
+      } catch {
+        await stop();
+        allowQuit = true;
+        electron.app.quit();
+        throw new DesktopStartupError();
+      }
+    });
+    return runPromise;
+  }
+
+  const application = Object.freeze({
+    createOverlayWindow,
+    run,
+    state: () => lifecycleState,
+    stop,
   });
-});
+  return application;
+}
 
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
-  if (reminderInterval) clearInterval(reminderInterval);
-});
+function bootstrap() {
+  const electron = require('electron');
+  const application = createDesktopMain({ electron });
+  void application.run().catch(() => {
+    process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  DESKTOP_DASHBOARD_URL,
+  DesktopStartupError,
+  bootstrap,
+  createDesktopMain,
+  createElectronHttpRequest,
+};

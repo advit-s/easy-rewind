@@ -256,6 +256,7 @@ const expectedColumns = Object.freeze({
     'updated_at',
     'revision',
     'deleted_at',
+    'acknowledged_at',
   ],
   reminders: [
     'id',
@@ -536,6 +537,18 @@ const expectedIndexes = Object.freeze({
     automaticIndex('sqlite_autoindex_quiz_results_1', 'pk', 'id'),
   ],
   reminder_deliveries: [
+    namedIndex(
+      'idx_reminder_deliveries_device_outbox',
+      false,
+      false,
+      'profile_id',
+      'device_id',
+      'channel',
+      'state',
+      'acknowledged_at',
+      'updated_at',
+      'id'
+    ),
     namedIndex(
       'idx_reminder_deliveries_device_pending',
       false,

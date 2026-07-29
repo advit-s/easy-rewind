@@ -49,7 +49,7 @@ function createResearchService({ repository, jobs, remoteFetcher, aiService } = 
     ) {
       fail('REPOSITORY_INPUT_INVALID');
     }
-    const configuration = await aiService.status({ provider, model });
+    const configuration = await aiService.status({ profileId, provider, model });
     if (configuration.state !== 'configured') {
       return Object.freeze({ model, provider, state: 'not_configured' });
     }
@@ -109,6 +109,7 @@ function createResearchService({ repository, jobs, remoteFetcher, aiService } = 
           model,
           operation: 'research',
           prompt: query,
+          profileId,
           provider,
           untrustedContent: source.body,
         },

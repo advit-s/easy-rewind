@@ -79,6 +79,24 @@ async function createInstallTokenService({
     });
   }
 
+  async function getAuthorization({ credentialId, profileId } = {}) {
+    validateProfileId(profileId);
+    if (typeof credentialId !== 'string' || credentialId.length === 0) fail('AUTH_INPUT_INVALID');
+    const row = findCredential.get(credentialId);
+    if (row === undefined || row.profile_id !== profileId) fail('AUTH_OWNER_MISMATCH');
+    if (row.state !== 'active') fail('AUTH_BEARER_INVALID');
+    let token;
+    try {
+      token = await secretStore.get(row.secret_ref);
+    } catch {
+      fail('AUTH_SECRET_STORE_FAILED');
+    }
+    if (typeof token !== 'string' || !tools.matches(token, row.secret_digest)) {
+      fail('AUTH_SECRET_STORE_FAILED');
+    }
+    return `Bearer ${token}`;
+  }
+
   async function rotate({ credentialId, profileId } = {}) {
     validateProfileId(profileId);
     if (typeof credentialId !== 'string' || credentialId.length === 0) fail('AUTH_INPUT_INVALID');
@@ -110,7 +128,7 @@ async function createInstallTokenService({
     return Object.freeze({ credentialId, token, tokenType: 'Bearer' });
   }
 
-  return Object.freeze({ authenticate, provision, rotate });
+  return Object.freeze({ authenticate, getAuthorization, provision, rotate });
 }
 
 module.exports = { createInstallTokenService };

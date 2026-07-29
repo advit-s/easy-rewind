@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const { once } = require('node:events');
 const { EventEmitter } = require('node:events');
 const net = require('node:net');
+const { resolve } = require('node:path');
 const test = require('node:test');
 
 function config(overrides = {}) {
@@ -370,4 +371,42 @@ test('standalone lifecycle owns signal handlers and routes shutdown through the 
   assert.equal(signalSource.listenerCount('SIGINT'), 0);
   assert.equal(signalSource.listenerCount('SIGTERM'), 0);
   assert.deepEqual(messages, ['Easy Rewind backend is ready.']);
+});
+
+test('standalone lifecycle passes dashboard configuration separately into composition', async () => {
+  const { startStandalone } = require('./start-standalone');
+  const signalSource = new EventEmitter();
+  signalSource.exitCode = 0;
+  const dashboardDirectory = resolve(__dirname, '..', '..', '..', 'frontend');
+  const standaloneConfig = { mode: 'standalone' };
+  const platformAdapters = { marker: 'exact-adapter-object' };
+  const calls = [];
+  const runtime = {
+    async start() {
+      calls.push('start');
+    },
+    async stop() {
+      calls.push('stop');
+    },
+  };
+
+  const standalone = await startStandalone({
+    adapters: platformAdapters,
+    config: standaloneConfig,
+    dashboardDirectory,
+    createComposition(options) {
+      calls.push(options);
+      return runtime;
+    },
+    signalSource,
+    logger: { error: assert.fail, info() {} },
+  });
+
+  assert.equal(calls[0].adapters, platformAdapters);
+  assert.equal(calls[0].config, standaloneConfig);
+  assert.equal(calls[0].dashboardDirectory, dashboardDirectory);
+  assert.deepEqual(calls.slice(1), ['start']);
+  await standalone.shutdown();
+  standalone.disposeSignals();
+  assert.deepEqual(calls.slice(1), ['start', 'stop']);
 });

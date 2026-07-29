@@ -24,6 +24,14 @@ function fixture(overrides = {}) {
       calls.push(['listReminders', input]);
       return { items: [], nextCursor: null, hasMore: false };
     },
+    listDeliveryOutbox(input) {
+      calls.push(['listDeliveryOutbox', input]);
+      return {
+        items: [{ delivery: { id: 'delivery-one', state: 'delivered' } }],
+        nextCursor: 'next_cursor',
+        hasMore: true,
+      };
+    },
     transitionReminder(input) {
       calls.push(['transitionReminder', input]);
       return { id: input.id, profile_id: input.profileId, state: input.action };
@@ -162,6 +170,61 @@ test('delivery acknowledgement uses only the authenticated device identity', asy
         profileId: 'profile-one',
         deviceId: 'device-phone',
         deliveryId: 'delivery-one',
+      },
+    ],
+  ]);
+});
+
+test('desktop compatibility outbox is bounded and derives profile and device from authentication', async () => {
+  const context = fixture();
+  const response = await request(context.app).get(
+    '/api/reminder-deliveries?channel=desktop&limit=10&cursor=cursor_one'
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, {
+    deliveries: [{ delivery: { id: 'delivery-one', state: 'delivered' } }],
+    nextCursor: 'next_cursor',
+    hasMore: true,
+  });
+  assert.deepEqual(context.calls, [
+    [
+      'listDeliveryOutbox',
+      {
+        profileId: 'profile-one',
+        deviceId: 'device-phone',
+        channel: 'desktop',
+        cursor: 'cursor_one',
+        limit: 10,
+      },
+    ],
+  ]);
+
+  for (const path of [
+    '/api/reminder-deliveries',
+    '/api/reminder-deliveries?channel=browser',
+    '/api/reminder-deliveries?channel=desktop&limit=0',
+    '/api/reminder-deliveries?channel=desktop&limit=101',
+  ]) {
+    assert.equal((await request(context.app).get(path)).status, 400, path);
+  }
+  assert.equal(context.calls.length, 1);
+});
+
+test('desktop compatibility acknowledgement has the same scoped semantics as the canonical action', async () => {
+  const context = fixture();
+  const response = await request(context.app)
+    .post('/api/reminder-deliveries/delivery-two/acknowledge')
+    .send({ deviceId: 'device-pc' });
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(context.calls, [
+    [
+      'acknowledgeDelivery',
+      {
+        profileId: 'profile-one',
+        deviceId: 'device-phone',
+        deliveryId: 'delivery-two',
       },
     ],
   ]);

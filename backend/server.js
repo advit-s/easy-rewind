@@ -38,6 +38,7 @@ function createStandaloneConfigFromEnvironment(environment = process.env) {
 async function runStandalone({
   config,
   adapters,
+  dashboardDirectory = resolve(__dirname, '..', 'frontend'),
   createPlatformAdapters = options => {
     const { createStandaloneWindowsPlatformAdapters } = require('../desktop/windows-platform-adapters');
     return createStandaloneWindowsPlatformAdapters(options);
@@ -57,6 +58,7 @@ async function runStandalone({
     return await start({
       adapters: resolvedAdapters,
       config: resolvedConfig,
+      dashboardDirectory,
       logger,
       signalSource,
     });

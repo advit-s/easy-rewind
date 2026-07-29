@@ -6,6 +6,7 @@ const test = require('node:test');
 
 test('standalone defaults its canonical runtime and protected adapters under LOCALAPPDATA', async () => {
   const localAppData = 'C:\\Users\\fixture\\AppData\\Local';
+  const frontendDirectory = resolve(__dirname, '..', '..', 'frontend');
   const events = [];
   const platformAdapters = {
     filePermissions: { restrictDirectory() {}, restrictFile() {} },
@@ -35,6 +36,9 @@ test('standalone defaults its canonical runtime and protected adapters under LOC
   assert.equal(events[0][1].localAppData, localAppData);
   assert.equal(events[1][1].config.storageRoot, platformAdapters.storageRoot);
   assert.equal(events[1][1].adapters, platformAdapters);
+  assert.equal(events[1][1].dashboardDirectory, frontendDirectory);
+  assert.equal(Object.hasOwn(events[1][1].config, 'dashboardDirectory'), false);
+  assert.equal(Object.hasOwn(platformAdapters, 'dashboardDirectory'), false);
 });
 
 test('standalone startup fails safely before composition when LOCALAPPDATA protection is unavailable', async () => {

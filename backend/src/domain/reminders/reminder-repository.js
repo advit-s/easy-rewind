@@ -1,6 +1,7 @@
 'use strict';
 
 const { fail } = require('../domain-error');
+const { decodeCursor, encodeCursor } = require('../repository-utils');
 const { transitionReminder } = require('./reminder-state');
 
 const DELIVERY_CHANNELS = new Set(['desktop', 'browser', 'email']);
@@ -179,6 +180,84 @@ function createReminderRepository({ db, repositoryUtils } = {}) {
       .all(profileId, dueAt, maxAttempts, limit);
   }
 
+  function listDeliveryOutbox({ profileId, deviceId, channel, cursor, limit = 25 } = {}) {
+    if (
+      !nonEmptyText(profileId) ||
+      !nonEmptyText(deviceId) ||
+      !DELIVERY_CHANNELS.has(channel) ||
+      !Number.isSafeInteger(limit) ||
+      limit < 1 ||
+      limit > 100
+    ) {
+      fail('REPOSITORY_INPUT_INVALID');
+    }
+    const position = cursor === undefined || cursor === null ? null : decodeCursor(cursor);
+    const cursorPredicate =
+      position === null
+        ? ''
+        : ` AND (
+              deliveries.updated_at < ?
+              OR (deliveries.updated_at = ? AND deliveries.id < ?)
+            )`;
+    const rows = db
+      .prepare(
+        `SELECT
+           deliveries.id AS delivery_id,
+           deliveries.channel AS delivery_channel,
+           deliveries.state AS delivery_state,
+           deliveries.scheduled_at AS delivery_scheduled_at,
+           deliveries.delivered_at AS delivery_delivered_at,
+           deliveries.acknowledged_at AS delivery_acknowledged_at,
+           deliveries.updated_at AS delivery_updated_at,
+           reminders.id AS reminder_id,
+           reminders.state AS reminder_state,
+           reminders.due_at AS reminder_due_at,
+           reminders.revision AS reminder_revision,
+           items.id AS item_id,
+           items.kind AS item_kind,
+           substr(items.title, 1, 256) AS item_title,
+           items.url AS item_url,
+           substr(items.excerpt, 1, 512) AS item_excerpt,
+           substr(items.body, 1, 512) AS item_body
+         FROM reminder_deliveries AS deliveries
+         JOIN reminders
+           ON reminders.profile_id = deliveries.profile_id
+          AND reminders.id = deliveries.reminder_id
+          AND reminders.deleted_at IS NULL
+         LEFT JOIN items
+           ON items.profile_id = reminders.profile_id
+          AND items.id = reminders.item_id
+          AND items.deleted_at IS NULL
+         WHERE deliveries.profile_id = ?
+           AND deliveries.device_id = ?
+           AND deliveries.channel = ?
+           AND deliveries.state = 'delivered'
+           AND deliveries.acknowledged_at IS NULL
+           AND deliveries.deleted_at IS NULL${cursorPredicate}
+         ORDER BY deliveries.updated_at DESC, deliveries.id DESC
+         LIMIT ?`
+      )
+      .all(
+        ...(position === null
+          ? [profileId, deviceId, channel, limit + 1]
+          : [profileId, deviceId, channel, position.updatedAt, position.updatedAt, position.id, limit + 1])
+      );
+    const hasMore = rows.length > limit;
+    const items = hasMore ? rows.slice(0, limit) : rows;
+    const last = items.at(-1);
+    return {
+      items,
+      nextCursor:
+        hasMore && last
+          ? encodeCursor({
+              updatedAt: last.delivery_updated_at,
+              id: last.delivery_id,
+            })
+          : null,
+      hasMore,
+    };
+  }
+
   function claimDelivery({ profileId, id, expectedRevision } = {}) {
     const revision = repositoryUtils.allocateRevision({
       profileId,
@@ -272,15 +351,16 @@ function createReminderRepository({ db, repositoryUtils } = {}) {
       )
       .get(profileId, deviceId, id);
     if (!current) fail('NOT_FOUND');
+    if (current.acknowledged_at !== null) return current;
     const updatedAt = repositoryUtils.timestamp();
     const result = db
       .prepare(
         `UPDATE reminder_deliveries
-         SET updated_at = ?, revision = revision + 1
+         SET acknowledged_at = ?, updated_at = ?, revision = revision + 1
          WHERE profile_id = ? AND device_id = ? AND id = ? AND revision = ?
-           AND state = 'delivered' AND deleted_at IS NULL`
+           AND state = 'delivered' AND acknowledged_at IS NULL AND deleted_at IS NULL`
       )
-      .run(updatedAt, profileId, deviceId, id, current.revision);
+      .run(updatedAt, updatedAt, profileId, deviceId, id, current.revision);
     if (result.changes !== 1) fail('CONFLICT');
     return getDelivery(profileId, id);
   }
@@ -307,6 +387,7 @@ function createReminderRepository({ db, repositoryUtils } = {}) {
     findReminder,
     getDelivery,
     listDeliveries,
+    listDeliveryOutbox,
     listReadyDeliveries,
     listReminders: options => repositoryUtils.page({ ...options, table: 'reminders' }),
     markDelivered,

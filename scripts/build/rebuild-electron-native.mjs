@@ -17,6 +17,7 @@ import process from 'node:process';
 
 const electronVersion = '43.2.0';
 const nativePackageName = 'better-sqlite3';
+const nativePackageVersion = '13.0.1';
 const repositoryRoot = resolve(import.meta.dirname, '..', '..');
 const sharedNodeModules = join(repositoryRoot, 'node_modules');
 const sharedNativeModule = join(sharedNodeModules, nativePackageName);
@@ -151,16 +152,60 @@ function verifyPinnedElectronInstallation() {
   }
 }
 
+function verifyPinnedNativeInstallation() {
+  const nativeManifest = JSON.parse(readFileSync(join(sharedNativeModule, 'package.json'), 'utf8'));
+  if (nativeManifest.name !== nativePackageName || nativeManifest.version !== nativePackageVersion) {
+    throw new StagingError();
+  }
+}
+
+function verifyElectronRuntimeVersion() {
+  const verification = spawnSync(
+    electronExecutable,
+    ['-e', `if (process.versions.electron !== '${electronVersion}') process.exit(2);`],
+    {
+      encoding: 'utf8',
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      timeout: 30_000,
+      windowsHide: true,
+    }
+  );
+  if (verification.status !== 0 || verification.error || verification.signal) {
+    throw new StagingError();
+  }
+}
+
 function main() {
   let stagingRoot;
   let failed = false;
   let failureDetail = '';
-  let stage = 'installation-check';
+  let stage = 'argument-check';
   try {
+    const argumentsList = process.argv.slice(2);
+    if (argumentsList.length > 1 || (argumentsList.length === 1 && argumentsList[0] !== '--validate-only')) {
+      throw new StagingError();
+    }
+    const validateOnly = argumentsList[0] === '--validate-only';
+    stage = 'installation-check';
     verifyPinnedElectronInstallation();
+    verifyPinnedNativeInstallation();
     stage = 'shared-binding-check';
     const originalBefore = bindingSnapshot(sharedNativeModule);
     if (!verifyNodeLoad(sharedNativeModule)) throw new StagingError();
+
+    if (validateOnly) {
+      stage = 'electron-runtime-check';
+      verifyElectronRuntimeVersion();
+      stage = 'shared-binding-preservation';
+      const originalAfter = bindingSnapshot(sharedNativeModule);
+      if (!snapshotsEqual(originalBefore, originalAfter) || !verifyNodeLoad(sharedNativeModule)) {
+        throw new StagingError();
+      }
+      process.stdout.write(
+        `Electron ${electronVersion} and ${nativePackageName} ${nativePackageVersion} dry validation passed.\n`
+      );
+      return;
+    }
 
     stage = 'staging-copy';
     stagingRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-electron-native-'));
@@ -173,7 +218,7 @@ function main() {
         {
           name: 'easy-rewind-electron-native-staging',
           private: true,
-          dependencies: { [nativePackageName]: '13.0.1' },
+          dependencies: { [nativePackageName]: nativePackageVersion },
         },
         null,
         2

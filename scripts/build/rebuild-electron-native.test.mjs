@@ -116,14 +116,71 @@ test('root and desktop manifests expose explicit native installation and verific
     'npm run install:electron && npm --workspace desktop run rebuild:native'
   );
   assert.equal(rootManifest.scripts['verify:native'], 'npm --workspace desktop run verify:native');
+  assert.equal(rootManifest.scripts['validate:native'], 'npm --workspace desktop run validate:native');
+  assert.equal(
+    rootManifest.scripts['test:desktop-package'],
+    'node --test scripts/validation/validate-desktop-package.test.mjs'
+  );
+  assert.equal(
+    rootManifest.scripts['validate:desktop-package'],
+    'node scripts/validation/validate-desktop-package.mjs'
+  );
   assert.equal(desktopManifest.scripts['install:electron'], 'node ../node_modules/electron/install.js');
   assert.equal(desktopManifest.scripts['rebuild:native'], 'node ../scripts/build/rebuild-electron-native.mjs');
+  assert.equal(
+    desktopManifest.scripts['validate:native'],
+    'npm run install:electron && node ../scripts/build/rebuild-electron-native.mjs --validate-only'
+  );
   assert.equal(
     desktopManifest.scripts['verify:native'],
     'npm run install:electron && node --test ../scripts/build/rebuild-electron-native.test.mjs && npm run rebuild:native'
   );
   assert.equal(desktopManifest.dependencies['better-sqlite3'], '13.0.1');
   assert.equal(desktopManifest.devDependencies.electron, '43.2.0');
+});
+
+test('native dry validation checks the Electron runtime without rebuilding or staging', () => {
+  const root = fixture(`
+    require('node:fs').writeFileSync(process.env.EASY_REWIND_TEST_MARKER, 'rebuild-ran');
+  `);
+  const marker = join(root, 'rebuild-ran.txt');
+  const beforeStages = stageDirectories();
+
+  try {
+    const result = spawnSync(process.execPath, ['scripts/build/rebuild-electron-native.mjs', '--validate-only'], {
+      cwd: root,
+      encoding: 'utf8',
+      env: { ...process.env, EASY_REWIND_TEST_MARKER: marker },
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.throws(() => readFileSync(marker), /ENOENT/);
+    assert.match(result.stderr, /Stage: electron-runtime-check/);
+    assert.deepEqual(stageDirectories(), beforeStages);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('native validation rejects an unpinned better-sqlite3 installation before rebuilding', () => {
+  const root = fixture(`
+    require('node:fs').writeFileSync(process.env.EASY_REWIND_TEST_MARKER, 'rebuild-ran');
+  `);
+  const marker = join(root, 'rebuild-ran.txt');
+  const nativeManifestPath = join(root, 'node_modules', 'better-sqlite3', 'package.json');
+  const nativeManifest = JSON.parse(readFileSync(nativeManifestPath, 'utf8'));
+  nativeManifest.version = '13.0.0';
+  writeFileSync(nativeManifestPath, JSON.stringify(nativeManifest));
+
+  try {
+    const result = run(root, { EASY_REWIND_TEST_MARKER: marker });
+
+    assert.notEqual(result.status, 0);
+    assert.throws(() => readFileSync(marker), /ENOENT/);
+    assert.match(result.stderr, /Stage: installation-check/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('staging inspection rejects database, credential, and quarantine artifacts', async t => {

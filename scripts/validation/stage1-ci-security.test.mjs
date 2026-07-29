@@ -465,7 +465,7 @@ test('every PowerShell history-remediation block parses without errors', () => {
   }
 });
 
-test('README uses only the canonical root workspace setup', () => {
+test('README uses the canonical root workspace setup for desktop and Android clients', () => {
   const readme = read('README.md');
 
   assert.match(readme, /Node\.js 24\.18\.0 LTS/);
@@ -475,7 +475,8 @@ test('README uses only the canonical root workspace setup', () => {
   assert.match(readme, /npm start/);
   assert.match(readme, /npm run verify/);
   assert.match(readme, /Electron's embedded Node runtime/i);
-  assert.doesNotMatch(readme, /\bAndroid\b/i);
+  assert.match(readme, /Android local-first onboarding/i);
+  assert.match(readme, /npm run test:android-release/i);
   assert.doesNotMatch(readme, /cd\s+(?:\.\/)?(?:backend|desktop)\b/i);
   assert.doesNotMatch(readme, /npm install/i);
   assert.doesNotMatch(readme, /real credentials|real (?:Gemini )?(?:API )?key/i);

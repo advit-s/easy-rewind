@@ -52,8 +52,9 @@ function createProviderRegistry({ secretStore, providers } = {}) {
   }
   const allowed = normalizeProviders(providers);
 
-  function selection({ provider, model } = {}) {
+  function selection({ profileId, provider, model } = {}) {
     if (
+      !identifier(profileId) ||
       !identifier(provider) ||
       !identifier(model) ||
       !allowed.has(provider) ||
@@ -61,40 +62,45 @@ function createProviderRegistry({ secretStore, providers } = {}) {
     ) {
       fail('REPOSITORY_INPUT_INVALID');
     }
-    return { model, provider };
+    return { model, profileId, provider };
   }
 
-  function secretName(provider) {
-    return `ai/${provider}/api-key`;
+  function secretName(profileId, provider) {
+    return `ai/${profileId}/${provider}/api-key`;
+  }
+
+  function publicState(selected, state) {
+    return Object.freeze({
+      model: selected.model,
+      provider: selected.provider,
+      state,
+    });
   }
 
   async function status(input) {
     const selected = selection(input);
-    const apiKey = await secretStore.get(secretName(selected.provider));
-    return Object.freeze({
-      ...selected,
-      state: apiKey === null ? 'not_configured' : 'configured',
-    });
+    const apiKey = await secretStore.get(secretName(selected.profileId, selected.provider));
+    return publicState(selected, apiKey === null ? 'not_configured' : 'configured');
   }
 
-  async function configure({ provider, model, apiKey } = {}) {
-    const selected = selection({ provider, model });
+  async function configure({ profileId, provider, model, apiKey } = {}) {
+    const selected = selection({ profileId, provider, model });
     if (typeof apiKey !== 'string' || apiKey.length < 1 || apiKey.length > 16_384) {
       fail('REPOSITORY_INPUT_INVALID');
     }
-    await secretStore.set(secretName(selected.provider), apiKey);
-    return Object.freeze({ ...selected, state: 'configured' });
+    await secretStore.set(secretName(selected.profileId, selected.provider), apiKey);
+    return publicState(selected, 'configured');
   }
 
   async function clear(input) {
     const selected = selection(input);
-    await secretStore.delete(secretName(selected.provider));
-    return Object.freeze({ ...selected, state: 'not_configured' });
+    await secretStore.delete(secretName(selected.profileId, selected.provider));
+    return publicState(selected, 'not_configured');
   }
 
   async function client(input) {
     const selected = selection(input);
-    const apiKey = await secretStore.get(secretName(selected.provider));
+    const apiKey = await secretStore.get(secretName(selected.profileId, selected.provider));
     if (apiKey === null) return null;
     let created;
     try {
@@ -112,16 +118,13 @@ function createProviderRegistry({ secretStore, providers } = {}) {
     const selected = selection(input);
     const created = await client(selected);
     if (created === null || typeof created.test !== 'function') {
-      return Object.freeze({ ...selected, state: 'error' });
+      return publicState(selected, 'error');
     }
     try {
       const valid = await created.test();
-      return Object.freeze({
-        ...selected,
-        state: valid === true ? 'configured' : 'error',
-      });
+      return publicState(selected, valid === true ? 'configured' : 'error');
     } catch {
-      return Object.freeze({ ...selected, state: 'error' });
+      return publicState(selected, 'error');
     }
   }
 

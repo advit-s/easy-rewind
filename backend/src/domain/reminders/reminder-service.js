@@ -119,11 +119,52 @@ function createReminderService({ repository, jobs, syncRecorder, now, ids } = {}
     });
   }
 
+  function listDeliveryOutbox(input) {
+    const page = repository.listDeliveryOutbox(input);
+    return {
+      items: page.items.map(row => {
+        const title = row.item_id === null || row.item_title.length === 0 ? 'Easy Rewind reminder' : row.item_title;
+        const body = row.item_id === null ? '' : row.item_excerpt || row.item_body;
+        return {
+          delivery: {
+            acknowledgedAt: row.delivery_acknowledged_at,
+            channel: row.delivery_channel,
+            deliveredAt: row.delivery_delivered_at,
+            id: row.delivery_id,
+            scheduledAt: row.delivery_scheduled_at,
+            state: row.delivery_state,
+          },
+          item:
+            row.item_id === null
+              ? null
+              : {
+                  excerpt: row.item_excerpt,
+                  id: row.item_id,
+                  kind: row.item_kind,
+                  title: row.item_title,
+                  url: row.item_url,
+                },
+          reminder: {
+            body,
+            dueAt: row.reminder_due_at,
+            id: row.reminder_id,
+            revision: row.reminder_revision,
+            state: row.reminder_state,
+            title,
+          },
+        };
+      }),
+      nextCursor: page.nextCursor,
+      hasMore: page.hasMore,
+    };
+  }
+
   return Object.freeze({
     acknowledgeDelivery: ({ profileId, deviceId, deliveryId } = {}) =>
       repository.acknowledgeDelivery({ profileId, deviceId, id: deliveryId }),
     createReminder,
     getReminder: ({ profileId, id } = {}) => repository.findReminder(profileId, id),
+    listDeliveryOutbox,
     listReminders: input => repository.listReminders(input),
     repeatReminder,
     transitionReminder: transition,

@@ -1,302 +1,292 @@
-/**
- * easy-rewind Desktop Overlay — Renderer Script
- *
- * Provides: quick lookup, quick notes, recent bookmarks/notes
- * All API calls go through the preload bridge.
- */
+'use strict';
 
-const API = window.easyRewind;
+const bridge = window.easyRewind;
 
-// ─────────────────────────────────────────────
-// STATE
-// ─────────────────────────────────────────────
-let desktopSettings = { apiBase: 'http://localhost:5000', apiKey: '', aiModel: 'gemini-2.5-flash', reminderMinutes: 60 };
-
-// ─────────────────────────────────────────────
-// DOM REFS
-// ─────────────────────────────────────────────
-const els = {
-  searchInput: document.getElementById('search-input'),
-  searchBtn: document.getElementById('search-btn'),
-  resultBox: document.getElementById('result-box'),
-  resultTerm: document.getElementById('result-term'),
-  resultDef: document.getElementById('result-def'),
-
-  modeTabs: document.querySelectorAll('.mode-tab'),
-  panels: {
-    note: document.getElementById('panel-note'),
-    recent: document.getElementById('panel-recent'),
-  },
-
-  noteInput: document.getElementById('note-input'),
-  saveNoteBtn: document.getElementById('save-note-btn'),
-  noteStatus: document.getElementById('note-status'),
-
-  recentList: document.getElementById('recent-list'),
+const elements = Object.freeze({
+  capturePanel: document.getElementById('capture-panel'),
+  captureStatus: document.getElementById('capture-status'),
+  clearResultsButton: document.getElementById('clear-results-button'),
+  closeButton: document.getElementById('close-button'),
   globalStatus: document.getElementById('global-status'),
+  noteInput: document.getElementById('note-input'),
+  recentList: document.getElementById('recent-list'),
+  recentPanel: document.getElementById('recent-panel'),
+  refreshButton: document.getElementById('refresh-button'),
+  saveNoteButton: document.getElementById('save-note-button'),
+  searchButton: document.getElementById('search-button'),
+  searchInput: document.getElementById('search-input'),
+  searchResultList: document.getElementById('search-result-list'),
+  searchResults: document.getElementById('search-results'),
+  tabs: [...document.querySelectorAll('.mode-tab')],
+});
 
-  closeBtn: document.getElementById('close-btn'),
+function clear(node) {
+  while (node.firstChild !== null) node.removeChild(node.firstChild);
+}
 
-  // Settings
-  settingsBtn: document.getElementById('settings-btn'),
-  settingsOverlay: document.getElementById('settings-overlay'),
-  settingsCancel: document.getElementById('settings-cancel'),
-  settingsSave: document.getElementById('settings-save'),
-  settingsApiUrl: document.getElementById('settings-api-url'),
-  settingsApiKey: document.getElementById('settings-api-key'),
-  settingsReminderMin: document.getElementById('settings-reminder-min'),
-};
+function text(value, fallback = '') {
+  return typeof value === 'string' && value.trim() !== '' ? value : fallback;
+}
 
-// ─────────────────────────────────────────────
-// MODE SWITCHING
-// ─────────────────────────────────────────────
-let currentMode = 'search';
+function collection(value, ...keys) {
+  if (Array.isArray(value?.items)) return value.items;
+  for (const key of keys) {
+    if (Array.isArray(value?.[key])) return value[key];
+  }
+  return [];
+}
 
-els.modeTabs.forEach((tab) => {
-  tab.addEventListener('click', () => {
-    els.modeTabs.forEach((t) => t.classList.remove('active'));
-    tab.classList.add('active');
-    currentMode = tab.dataset.mode;
+function timestamp(value) {
+  const date =
+    Number.isSafeInteger(value) && value >= 0
+      ? new Date(value)
+      : typeof value === 'string' && value.length <= 64
+        ? new Date(value.includes('T') ? value : value.replace(' ', 'T') + 'Z')
+        : null;
+  if (date === null || Number.isNaN(date.valueOf())) return '';
+  const elapsed = Date.now() - date.valueOf();
+  if (elapsed < 60_000) return 'Just now';
+  if (elapsed < 3_600_000) return `${Math.floor(elapsed / 60_000)}m ago`;
+  if (elapsed < 86_400_000) return `${Math.floor(elapsed / 3_600_000)}h ago`;
+  if (elapsed < 604_800_000) return `${Math.floor(elapsed / 86_400_000)}d ago`;
+  return new Intl.DateTimeFormat(undefined, { day: 'numeric', month: 'short' }).format(date);
+}
 
-    // Hide all panels
-    Object.values(els.panels).forEach((p) => p?.classList.remove('active'));
+function externalUrl(value) {
+  if (typeof value !== 'string' || value.length > 4096) return null;
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username !== '' || url.password !== '') return null;
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
 
-    if (currentMode === 'note') {
-      els.panels.note?.classList.add('active');
-      els.noteInput?.focus();
-    } else if (currentMode === 'recent') {
-      els.panels.recent?.classList.add('active');
-      loadRecent();
-    } else {
-      els.searchInput?.focus();
-    }
+function status(element, message = '', kind = '') {
+  element.textContent = message;
+  element.classList.remove('error', 'success');
+  if (kind !== '') element.classList.add(kind);
+}
+
+function errorMessage(result, fallback) {
+  const message = result?.error?.message;
+  return typeof message === 'string' && message.length <= 240 ? message : fallback;
+}
+
+async function request(path, options) {
+  let result;
+  try {
+    result = await bridge.apiRequest(path, options);
+  } catch {
+    throw new Error('Easy Rewind could not reach the local backend.');
+  }
+  if (result?.state !== 'ready') {
+    throw new Error(errorMessage(result, 'The local backend could not complete this request.'));
+  }
+  return result.data;
+}
+
+function card({ title, excerpt, meta, url }) {
+  const safeUrl = externalUrl(url);
+  const root = document.createElement(safeUrl === null ? 'article' : 'button');
+  root.className = 'result-card';
+  if (safeUrl !== null) {
+    root.type = 'button';
+    root.addEventListener('click', () => bridge.openInBrowser(safeUrl));
+  }
+
+  const titleNode = document.createElement('span');
+  titleNode.className = 'result-title';
+  titleNode.textContent = text(title, 'Untitled memory').slice(0, 240);
+  root.appendChild(titleNode);
+
+  if (text(excerpt) !== '') {
+    const excerptNode = document.createElement('span');
+    excerptNode.className = 'result-excerpt';
+    excerptNode.textContent = text(excerpt).slice(0, 360);
+    root.appendChild(excerptNode);
+  }
+
+  if (text(meta) !== '') {
+    const metaNode = document.createElement('span');
+    metaNode.className = 'result-meta';
+    metaNode.textContent = text(meta).slice(0, 120);
+    root.appendChild(metaNode);
+  }
+  return root;
+}
+
+function emptyState(message) {
+  const node = document.createElement('p');
+  node.className = 'empty-state';
+  node.textContent = message;
+  return node;
+}
+
+function itemCard(item) {
+  const body = text(item?.excerpt, text(item?.body, text(item?.content)));
+  return card({
+    title: text(item?.title, body),
+    excerpt: body,
+    meta: [text(item?.kind), timestamp(item?.updatedAt ?? item?.updated_at ?? item?.created_at)]
+      .filter(Boolean)
+      .join(' · '),
+    url: item?.url,
   });
-});
-
-// ─────────────────────────────────────────────
-// SHOW STATUS
-// ─────────────────────────────────────────────
-function showStatus(el, msg, type = '', duration = 0) {
-  el.textContent = msg;
-  el.className = 'status visible ' + type;
-  if (duration > 0) setTimeout(() => { el.classList.remove('visible'); }, duration);
 }
 
-// ─────────────────────────────────────────────
-// QUICK LOOKUP
-// ─────────────────────────────────────────────
-async function handleSearch() {
-  const term = els.searchInput.value.trim();
-  if (!term) return;
+function noteCard(note) {
+  const body = text(note?.body, text(note?.content, 'Saved thought'));
+  return card({
+    title: body,
+    excerpt: '',
+    meta: `Thought${timestamp(note?.updatedAt ?? note?.updated_at ?? note?.created_at) ? ` · ${timestamp(note?.updatedAt ?? note?.updated_at ?? note?.created_at)}` : ''}`,
+  });
+}
 
-  els.resultBox.classList.remove('visible');
-  els.searchBtn.disabled = true;
-  els.searchBtn.innerHTML = '<span class="spinner"></span>';
+function bookmarkCard(bookmark) {
+  return card({
+    title: text(bookmark?.title, text(bookmark?.topic, 'Saved bookmark')),
+    excerpt: text(bookmark?.description, text(bookmark?.excerpt)),
+    meta: `Bookmark${timestamp(bookmark?.createdAt ?? bookmark?.created_at) ? ` · ${timestamp(bookmark?.createdAt ?? bookmark?.created_at)}` : ''}`,
+    url: bookmark?.url,
+  });
+}
+
+function setBusy(button, busy, idleLabel, busyLabel) {
+  button.disabled = busy;
+  button.textContent = busy ? busyLabel : idleLabel;
+}
+
+async function search() {
+  const query = elements.searchInput.value.trim();
+  if (query === '') {
+    status(elements.globalStatus, 'Enter something to search for.', 'error');
+    elements.searchInput.focus();
+    return;
+  }
+
+  setBusy(elements.searchButton, true, 'Search', 'Searching…');
+  status(elements.globalStatus);
+  elements.searchResults.hidden = false;
+  clear(elements.searchResultList);
+  elements.searchResultList.appendChild(emptyState('Searching your local memory…'));
 
   try {
-    const data = await API.apiCall('/quick-lookup', {
-      method: 'POST',
-      body: { term },
+    const data = await request('/api/search?q=' + encodeURIComponent(query) + '&limit=20', {
+      method: 'GET',
     });
-
-    if (data.error) {
-      throw new Error(data.error);
+    const items = collection(data, 'results');
+    clear(elements.searchResultList);
+    if (items.length === 0) {
+      elements.searchResultList.appendChild(emptyState('No matching memories yet.'));
+    } else {
+      for (const item of items.slice(0, 20)) elements.searchResultList.appendChild(itemCard(item));
     }
-
-    els.resultTerm.textContent = data.term;
-    els.resultDef.textContent = data.definition;
-    els.resultBox.classList.add('visible');
-  } catch (err) {
-    showStatus(els.globalStatus, err.message || 'Server offline', 'error', 3000);
+  } catch (error) {
+    clear(elements.searchResultList);
+    elements.searchResultList.appendChild(emptyState('Search is unavailable while the local backend is offline.'));
+    status(elements.globalStatus, error.message, 'error');
   } finally {
-    els.searchBtn.disabled = false;
-    els.searchBtn.innerHTML = '🔍';
+    setBusy(elements.searchButton, false, 'Search', 'Searching…');
   }
 }
 
-els.searchBtn.addEventListener('click', handleSearch);
-els.searchInput.addEventListener('keydown', (e) => {
-  if (e.key === 'Enter') handleSearch();
-  if (e.key === 'Escape') API.hideOverlay();
-});
+async function saveNote() {
+  const content = elements.noteInput.value.trim();
+  if (content === '') {
+    status(elements.captureStatus, 'Write a thought before saving.', 'error');
+    elements.noteInput.focus();
+    return;
+  }
 
-// ─────────────────────────────────────────────
-// QUICK NOTE
-// ─────────────────────────────────────────────
-async function handleSaveNote() {
-  const content = els.noteInput.value.trim();
-  if (!content) return;
-
-  els.saveNoteBtn.disabled = true;
-  els.saveNoteBtn.innerHTML = '<span class="spinner"></span> Saving...';
-
+  setBusy(elements.saveNoteButton, true, 'Save thought', 'Saving…');
+  status(elements.captureStatus);
   try {
-    const remindMins = desktopSettings.reminderMinutes || 60;
-    await API.apiCall('/notes', {
+    await request('/api/notes', {
+      body: { content },
       method: 'POST',
-      body: { content, remind_in_minutes: remindMins },
     });
-
-    showStatus(els.noteStatus, `✅ Thought saved! (reminder in ${remindMins >= 1440 ? Math.floor(remindMins/1440)+'d' : remindMins >= 60 ? Math.floor(remindMins/60)+'h' : remindMins+'min'})`, 'success', 3000);
-    els.noteInput.value = '';
-  } catch (err) {
-    showStatus(els.noteStatus, err.message || 'Failed to save', 'error', 3000);
+    elements.noteInput.value = '';
+    status(elements.captureStatus, 'Thought saved to your local memory.', 'success');
+  } catch (error) {
+    status(elements.captureStatus, error.message, 'error');
   } finally {
-    els.saveNoteBtn.disabled = false;
-    els.saveNoteBtn.innerHTML = '💾 Save Thought';
+    setBusy(elements.saveNoteButton, false, 'Save thought', 'Saving…');
   }
 }
 
-els.saveNoteBtn.addEventListener('click', handleSaveNote);
-els.noteInput.addEventListener('keydown', (e) => {
-  if (e.ctrlKey && e.key === 'Enter') handleSaveNote();
-  if (e.key === 'Escape') API.hideOverlay();
-});
-
-// ─────────────────────────────────────────────
-// LOAD RECENT BOOKMARKS & NOTES
-// ─────────────────────────────────────────────
 async function loadRecent() {
-  els.recentList.innerHTML = '<div style="text-align:center;padding:12px;color:var(--text-muted);font-size:11px;">Loading...</div>';
+  clear(elements.recentList);
+  elements.recentList.appendChild(emptyState('Loading recent memories…'));
+  status(elements.globalStatus);
+  elements.refreshButton.disabled = true;
 
   try {
-    const [bookmarksData, notesData] = await Promise.all([
-      API.apiCall('/bookmarks?limit=10'),
-      API.apiCall('/notes?limit=5'),
+    const [notesData, bookmarksData] = await Promise.all([
+      request('/api/notes?limit=6', { method: 'GET' }),
+      request('/api/bookmarks?limit=8', { method: 'GET' }),
     ]);
-
-    const bookmarks = bookmarksData.bookmarks || [];
-    const notes = notesData.notes || [];
-
-    if (bookmarks.length === 0 && notes.length === 0) {
-      els.recentList.innerHTML = '<div style="text-align:center;padding:16px;color:var(--text-muted);font-size:11px;">No bookmarks or notes yet. Start exploring!</div>';
+    const notes = collection(notesData, 'notes');
+    const bookmarks = collection(bookmarksData, 'bookmarks');
+    clear(elements.recentList);
+    if (notes.length === 0 && bookmarks.length === 0) {
+      elements.recentList.appendChild(emptyState('Nothing here yet. Capture your first thought.'));
       return;
     }
-
-    let html = '';
-
-    if (notes.length > 0) {
-      html += '<div style="font-size:9px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:4px;">📝 Recent Thoughts</div>';
-      notes.forEach((note) => {
-        html += `<div class="recent-item" data-action="hide">
-          <div class="recent-item-content">${escapeHtml(String(note.content).slice(0, 100))}</div>
-          <div class="recent-item-meta">${formatTime(note.created_at)}${note.remind_at ? ' · ⏰' : ''}</div>
-        </div>`;
-      });
-    }
-
-    if (bookmarks.length > 0) {
-      html += '<div style="font-size:9px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.5px;margin:8px 0 4px;">🔖 Recent Bookmarks</div>';
-      bookmarks.forEach((bm) => {
-        html += `<div class="recent-item" data-action="open" data-url="${escapeHtml(String(bm.url))}">
-          <div class="recent-item-content">${escapeHtml(String(bm.topic))} — ${escapeHtml(String(bm.title || bm.url).slice(0, 60))}</div>
-          <div class="recent-item-meta">${formatTime(bm.created_at)}</div>
-        </div>`;
-      });
-    }
-
-    els.recentList.innerHTML = html;
-
-    // Attach event handlers (no inline onclick)
-    els.recentList.querySelectorAll('.recent-item[data-action="hide"]').forEach(el => {
-      el.addEventListener('click', () => API.hideOverlay());
-    });
-    els.recentList.querySelectorAll('.recent-item[data-action="open"]').forEach(el => {
-      el.addEventListener('click', () => API.openInBrowser(el.dataset.url));
-    });
-  } catch (err) {
-    els.recentList.innerHTML = '<div style="text-align:center;padding:16px;color:var(--text-muted);font-size:11px;">Could not load — is the server running?</div>';
+    for (const note of notes.slice(0, 6)) elements.recentList.appendChild(noteCard(note));
+    for (const bookmark of bookmarks.slice(0, 8)) elements.recentList.appendChild(bookmarkCard(bookmark));
+  } catch (error) {
+    clear(elements.recentList);
+    elements.recentList.appendChild(emptyState('Recent memories are unavailable while the local backend is offline.'));
+    status(elements.globalStatus, error.message, 'error');
+  } finally {
+    elements.refreshButton.disabled = false;
   }
 }
 
-function escapeHtml(str) {
-  if (!str) return '';
-  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/`/g, '&#96;');
+function activatePanel(panelId) {
+  for (const tab of elements.tabs) {
+    const active = tab.dataset.panel === panelId;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+  }
+  elements.capturePanel.classList.toggle('active', panelId === 'capture-panel');
+  elements.recentPanel.classList.toggle('active', panelId === 'recent-panel');
+  if (panelId === 'capture-panel') {
+    elements.noteInput.focus();
+  } else {
+    void loadRecent();
+  }
 }
 
-function parseDbDate(dateStr) {
-  if (!dateStr) return new Date();
-  const normalized = dateStr.replace(' ', 'T');
-  return new Date(normalized.endsWith('Z') ? normalized : normalized + 'Z');
-}
-
-function formatTime(dateStr) {
-  if (!dateStr) return '';
-  const date = parseDbDate(dateStr);
-  const now = new Date();
-  const diffMs = now - date;
-  if (isNaN(diffMs)) return 'Just now';
-  if (diffMs < 0) return 'Just now';
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return date.toLocaleDateString();
-}
-
-// ─────────────────────────────────────────────
-// SETTINGS MODAL
-// ─────────────────────────────────────────────
-async function openSettings() {
-  try {
-    const settings = await API.getSettings();
-    if (settings) desktopSettings = settings;
-  } catch (_) {}
-  els.settingsApiUrl.value = desktopSettings.apiBase || 'http://localhost:5000';
-  els.settingsApiKey.value = desktopSettings.apiKey || '';
-  els.settingsReminderMin.value = desktopSettings.reminderMinutes || 60;
-  els.settingsOverlay.classList.add('open');
-}
-
-function closeSettings() {
-  els.settingsOverlay.classList.remove('open');
-}
-
-async function saveSettings() {
-  desktopSettings.apiBase = els.settingsApiUrl.value.trim() || 'http://localhost:5000';
-  desktopSettings.apiKey = els.settingsApiKey.value.trim();
-  desktopSettings.reminderMinutes = parseInt(els.settingsReminderMin.value) || 60;
-  try {
-    await API.setSettings(desktopSettings);
-    showStatus(els.globalStatus, '✅ Settings saved!', 'success', 2000);
-  } catch (_) {}
-  closeSettings();
-}
-
-els.settingsBtn.addEventListener('click', openSettings);
-els.settingsCancel.addEventListener('click', closeSettings);
-els.settingsSave.addEventListener('click', saveSettings);
-els.settingsOverlay.addEventListener('click', (e) => {
-  if (e.target === els.settingsOverlay) closeSettings();
+elements.closeButton.addEventListener('click', () => bridge.hideOverlay());
+elements.searchButton.addEventListener('click', () => void search());
+elements.saveNoteButton.addEventListener('click', () => void saveNote());
+elements.refreshButton.addEventListener('click', () => void loadRecent());
+elements.clearResultsButton.addEventListener('click', () => {
+  elements.searchResults.hidden = true;
+  clear(elements.searchResultList);
+  elements.searchInput.focus();
 });
-
-// ─────────────────────────────────────────────
-// CLOSE BUTTON
-// ─────────────────────────────────────────────
-els.closeBtn.addEventListener('click', () => API.hideOverlay());
-
-// ─────────────────────────────────────────────
-// GLOBAL KEYBOARD
-// ─────────────────────────────────────────────
-document.addEventListener('keydown', (e) => {
-  if (e.key === 'Escape' && !els.settingsOverlay.classList.contains('open')) {
-    API.hideOverlay();
-  } else if (e.key === 'Escape') {
-    closeSettings();
+for (const tab of elements.tabs) {
+  tab.addEventListener('click', () => activatePanel(tab.dataset.panel));
+}
+elements.searchInput.addEventListener('keydown', event => {
+  if (event.key === 'Enter') {
+    event.preventDefault();
+    void search();
   }
 });
+elements.noteInput.addEventListener('keydown', event => {
+  if (event.key === 'Enter' && event.ctrlKey) {
+    event.preventDefault();
+    void saveNote();
+  }
+});
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape') bridge.hideOverlay();
+});
 
-// ─────────────────────────────────────────────
-// BOOT
-// ─────────────────────────────────────────────
-// Load saved settings, then focus search
-(async () => {
-  try {
-    const settings = await API.getSettings();
-    if (settings) desktopSettings = settings;
-  } catch (_) {}
-  els.searchInput.focus();
-})();
+elements.searchInput.focus();

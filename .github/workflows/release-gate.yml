@@ -1,0 +1,146 @@
+name: Release Gate
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_commit:
+        description: Exact 40-character commit SHA to accept
+        required: true
+        type: string
+      provider_revocation_reference:
+        description: Opaque private provider or incident attestation reference; never enter a key
+        required: true
+        type: string
+      provider_revocation_attestation_sha256:
+        description: SHA-256 of the protected revocation attestation file
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CI: true
+
+jobs:
+  external-release-gates:
+    name: External revocation and signing gates
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out exact release candidate
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up exact Node.js with npm download cache
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Verify exact Node and npm
+        shell: pwsh
+        run: |
+          if ((node --version) -ne 'v24.18.0') { throw 'Unexpected Node version.' }
+          if ((npm --version) -ne '11.6.2') { throw 'Unexpected npm version.' }
+      - name: Fail closed unless external attestations exist
+        shell: pwsh
+        env:
+          RELEASE_COMMIT: ${{ inputs.release_commit }}
+          PROVIDER_REVOCATION_REFERENCE: ${{ inputs.provider_revocation_reference }}
+          PROVIDER_REVOCATION_ATTESTATION_SHA256: ${{ inputs.provider_revocation_attestation_sha256 }}
+          WINDOWS_SIGNING_CERTIFICATE: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          WINDOWS_SIGNING_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          Set-StrictMode -Version Latest
+          $ErrorActionPreference = 'Stop'
+          if ($env:RELEASE_COMMIT -notmatch '^[a-f0-9]{40}$' -or $env:RELEASE_COMMIT -ne $env:GITHUB_SHA) {
+            throw 'Release commit attestation failed.'
+          }
+          if ($env:PROVIDER_REVOCATION_REFERENCE -notmatch '^[A-Za-z0-9][A-Za-z0-9._:/-]{5,199}$') {
+            throw 'Provider revocation reference is absent or invalid.'
+          }
+          if ($env:PROVIDER_REVOCATION_ATTESTATION_SHA256 -notmatch '^[a-f0-9]{64}$') {
+            throw 'Provider revocation attestation is absent or invalid.'
+          }
+          foreach ($requiredValue in @(
+            $env:WINDOWS_SIGNING_CERTIFICATE,
+            $env:WINDOWS_SIGNING_PASSWORD,
+            $env:ANDROID_KEYSTORE,
+            $env:ANDROID_KEY_ALIAS,
+            $env:ANDROID_KEY_PASSWORD
+          )) {
+            if ([string]::IsNullOrWhiteSpace($requiredValue)) {
+              throw 'A required release signing gate is absent.'
+            }
+          }
+
+  release-acceptance:
+    name: Signed release acceptance
+    runs-on: windows-latest
+    timeout-minutes: 60
+    needs: [external-release-gates]
+    steps:
+      - name: Check out exact release candidate
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up exact Node.js with npm download cache
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Verify exact Node and npm
+        shell: pwsh
+        run: |
+          if ((node --version) -ne 'v24.18.0') { throw 'Unexpected Node version.' }
+          if ((npm --version) -ne '11.6.2') { throw 'Unexpected npm version.' }
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run full acceptance verification
+        run: npm run verify
+      - name: Test release artifact validator
+        run: node --test scripts/validation/validate-release-artifacts.test.mjs
+      - name: Build signed Windows packages
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_SIGNING_CERTIFICATE }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_SIGNING_PASSWORD }}
+        run: npm run package:windows
+      - name: Inspect packaged ASAR, native module, and Windows artifacts
+        run: node scripts/validation/validate-release-artifacts.mjs --write-checksums
+      - name: Accept only Authenticode-signed Windows packages
+        shell: pwsh
+        run: |
+          # Builder UNSIGNED filenames are non-release until every package passes this signature gate.
+          New-Item -ItemType Directory -Path '.ci-release/artifacts/windows' -Force | Out-Null
+          $packages = @(Get-ChildItem -LiteralPath 'dist' -File | Where-Object { $_.Extension -in '.exe', '.msi' })
+          if ($packages.Count -eq 0) { throw 'No Windows release package was produced.' }
+          foreach ($package in $packages) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $package.FullName
+            if ($signature.Status -ne [System.Management.Automation.SignatureStatus]::Valid) {
+              throw 'Windows package signature validation failed.'
+            }
+            $releaseName = $package.Name -replace 'UNSIGNED', 'SIGNED'
+            if ($releaseName -eq $package.Name) { throw 'Unsigned package naming gate failed.' }
+            Copy-Item -LiteralPath $package.FullName -Destination (Join-Path '.ci-release/artifacts/windows' $releaseName)
+          }
+      - name: Build inspected extension package
+        run: node scripts/validation/validate-extension.mjs --package-output .ci-release/artifacts/extension
+      - name: Inspect release content and generate checksums
+        run: node scripts/validation/stage7-ci-artifacts.mjs --input .ci-release/artifacts --output .ci-release/evidence --release
+      - name: Upload signed release candidate
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: signed-release-candidate
+          path: |
+            .ci-release/artifacts
+            .ci-release/evidence
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

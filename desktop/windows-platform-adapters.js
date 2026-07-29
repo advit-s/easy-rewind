@@ -1,7 +1,8 @@
 'use strict';
 
-const { spawn } = require('node:child_process');
+const { spawn, spawnSync } = require('node:child_process');
 const { createHash, randomBytes } = require('node:crypto');
+const defaultSyncFilesystem = require('node:fs');
 const defaultFilesystem = require('node:fs/promises');
 const { isAbsolute, relative, resolve, sep } = require('node:path');
 
@@ -17,6 +18,7 @@ const ERROR_MESSAGES = Object.freeze({
 });
 
 const MAX_PROTECTED_BYTES = 1024 * 1024;
+const MAX_ACL_OUTPUT_BYTES = 64 * 1024;
 const SECRET_DIRECTORY = 'secrets';
 
 class WindowsPlatformAdapterError extends Error {
@@ -77,6 +79,23 @@ function validateAclController(controller) {
   }
 }
 
+function validateSyncFilesystem(filesystem) {
+  if (
+    filesystem === null ||
+    typeof filesystem !== 'object' ||
+    typeof filesystem.lstatSync !== 'function' ||
+    typeof filesystem.realpathSync !== 'function'
+  ) {
+    fail('WINDOWS_ACL_OPERATION_FAILED');
+  }
+}
+
+function validateSyncAclController(controller) {
+  if (controller === null || typeof controller !== 'object' || typeof controller.restrict !== 'function') {
+    fail('WINDOWS_ACL_OPERATION_FAILED');
+  }
+}
+
 function validateProtection(protection) {
   if (
     protection === null ||
@@ -112,6 +131,48 @@ async function inspectTarget(filesystem, trustedRoot, target, kind) {
   return `${String(metadata.dev)}:${String(metadata.ino)}`;
 }
 
+function validIdentityPart(value) {
+  return (
+    (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) ||
+    (typeof value === 'bigint' && value >= 0n)
+  );
+}
+
+function inspectTargetSync(filesystem, trustedRoot, target, kind) {
+  if (typeof target !== 'string' || target.length === 0 || !isAbsolute(target)) {
+    fail('WINDOWS_ACL_TARGET_INVALID');
+  }
+  const normalizedTarget = resolve(target);
+  if (target !== normalizedTarget || !isContained(trustedRoot, normalizedTarget)) {
+    fail('WINDOWS_ACL_TARGET_INVALID');
+  }
+  let metadata;
+  let canonical;
+  try {
+    metadata = filesystem.lstatSync(normalizedTarget, { bigint: true });
+    canonical = filesystem.realpathSync(normalizedTarget);
+  } catch {
+    fail('WINDOWS_ACL_TARGET_INVALID');
+  }
+  if (
+    metadata === null ||
+    typeof metadata !== 'object' ||
+    typeof metadata.isSymbolicLink !== 'function' ||
+    typeof metadata.isDirectory !== 'function' ||
+    typeof metadata.isFile !== 'function' ||
+    metadata.isSymbolicLink() ||
+    (typeof metadata.isReparsePoint === 'function' && metadata.isReparsePoint()) ||
+    resolve(canonical).toLowerCase() !== normalizedTarget.toLowerCase() ||
+    !isContained(trustedRoot, canonical) ||
+    (kind === 'directory' ? !metadata.isDirectory() : !metadata.isFile()) ||
+    !validIdentityPart(metadata.dev) ||
+    !validIdentityPart(metadata.ino)
+  ) {
+    fail('WINDOWS_ACL_TARGET_INVALID');
+  }
+  return `${String(metadata.dev)}:${String(metadata.ino)}`;
+}
+
 function createWindowsFilePermissions({ aclController, filesystem, trustedRoot }) {
   validateAclController(aclController);
   return Object.freeze({
@@ -135,6 +196,38 @@ function createWindowsFilePermissions({ aclController, filesystem, trustedRoot }
     const identityAfter = await inspectTarget(filesystem, trustedRoot, target, kind);
     if (identityAfter !== identityBefore) fail('WINDOWS_ACL_VERIFICATION_FAILED');
   }
+}
+
+function createWindowsArtifactFilePermissions({ aclController, filesystem, trustedRoot }) {
+  validateSyncAclController(aclController);
+  validateSyncFilesystem(filesystem);
+  return Object.freeze({
+    restrictFile(target) {
+      const identityBefore = inspectTargetSync(filesystem, trustedRoot, target, 'file');
+      let result;
+      try {
+        result = aclController.restrict({ kind: 'file', target });
+      } catch {
+        fail('WINDOWS_ACL_OPERATION_FAILED');
+      }
+      if (
+        result !== null &&
+        (typeof result === 'object' || typeof result === 'function') &&
+        typeof result.then === 'function'
+      ) {
+        Promise.resolve(result).catch(() => {});
+        fail('WINDOWS_ACL_OPERATION_FAILED');
+      }
+      if (result?.verified !== true) fail('WINDOWS_ACL_VERIFICATION_FAILED');
+      let identityAfter;
+      try {
+        identityAfter = inspectTargetSync(filesystem, trustedRoot, target, 'file');
+      } catch {
+        fail('WINDOWS_ACL_VERIFICATION_FAILED');
+      }
+      if (identityAfter !== identityBefore) fail('WINDOWS_ACL_VERIFICATION_FAILED');
+    },
+  });
 }
 
 function serializeSecret(value) {
@@ -344,6 +437,58 @@ function runPowerShellJson({ executable = powershellExecutable(), input, script,
   });
 }
 
+function runPowerShellJsonSync({
+  executable = powershellExecutable(),
+  input,
+  script,
+  timeoutMs = 15_000,
+  spawnSync: executeProcess = spawnSync,
+} = {}) {
+  if (
+    typeof executable !== 'string' ||
+    executable.length === 0 ||
+    typeof script !== 'string' ||
+    script.length === 0 ||
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1 ||
+    timeoutMs > 60_000 ||
+    typeof executeProcess !== 'function'
+  ) {
+    throw new Error('operation failed');
+  }
+  let serialized;
+  let result;
+  try {
+    serialized = JSON.stringify(input);
+    result = executeProcess(executable, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8',
+      input: serialized,
+      maxBuffer: MAX_ACL_OUTPUT_BYTES,
+      stdio: ['pipe', 'pipe', 'ignore'],
+      timeout: timeoutMs,
+      windowsHide: true,
+    });
+  } catch {
+    throw new Error('operation failed');
+  }
+  if (
+    result === null ||
+    typeof result !== 'object' ||
+    result.error !== undefined ||
+    result.signal !== null ||
+    result.status !== 0 ||
+    typeof result.stdout !== 'string' ||
+    Buffer.byteLength(result.stdout, 'utf8') > MAX_ACL_OUTPUT_BYTES
+  ) {
+    throw new Error('operation failed');
+  }
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    throw new Error('operation failed');
+  }
+}
+
 const DPAPI_SCRIPT = String.raw`
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName System.Security
@@ -406,16 +551,36 @@ $acl = if ($isDirectory) {
 } else {
   [IO.File]::GetAccessControl($target, $sections)
 }
+$inheritance = if ($isDirectory) {
+  [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+} else {
+  [Security.AccessControl.InheritanceFlags]::None
+}
+function Test-ExactCurrentUserAcl($candidate, $currentSid, $expectedInheritance) {
+  $candidateOwner = ([Security.Principal.NTAccount]$candidate.Owner).Translate(
+    [Security.Principal.SecurityIdentifier]).Value
+  $candidateRules = @($candidate.GetAccessRules(
+    $true, $true, [Security.Principal.SecurityIdentifier]))
+  return $candidate.AreAccessRulesProtected -and
+    $candidateOwner -eq $currentSid.Value -and
+    $candidateRules.Count -eq 1 -and
+    $candidateRules[0].IdentityReference.Translate(
+      [Security.Principal.SecurityIdentifier]).Value -eq $currentSid.Value -and
+    $candidateRules[0].AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
+    $candidateRules[0].FileSystemRights -eq [Security.AccessControl.FileSystemRights]::FullControl -and
+    -not $candidateRules[0].IsInherited -and
+    $candidateRules[0].InheritanceFlags -eq $expectedInheritance -and
+    $candidateRules[0].PropagationFlags -eq [Security.AccessControl.PropagationFlags]::None
+}
+if (Test-ExactCurrentUserAcl $acl $current $inheritance) {
+  @{ verified = $true } | ConvertTo-Json -Compress
+  exit 0
+}
 $acl.SetAccessRuleProtection($true, $false)
 $acl.SetOwner($current)
 foreach ($existingRule in @($acl.GetAccessRules(
   $true, $true, [Security.Principal.SecurityIdentifier]))) {
   [void]$acl.RemoveAccessRuleSpecific($existingRule)
-}
-$inheritance = if ($isDirectory) {
-  [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
-} else {
-  [Security.AccessControl.InheritanceFlags]::None
 }
 $rule = [Security.AccessControl.FileSystemAccessRule]::new(
   $current,
@@ -430,18 +595,7 @@ $actual = if ($isDirectory) {
 } else {
   [IO.File]::GetAccessControl($target, $sections)
 }
-$owner = ([Security.Principal.NTAccount]$actual.Owner).Translate(
-  [Security.Principal.SecurityIdentifier]).Value
-$rules = @($actual.Access)
-$valid = $actual.AreAccessRulesProtected -and
-  $owner -eq $current.Value -and
-  $rules.Count -eq 1 -and
-  $rules[0].IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value -eq $current.Value -and
-  $rules[0].AccessControlType -eq [Security.AccessControl.AccessControlType]::Allow -and
-  $rules[0].FileSystemRights -eq [Security.AccessControl.FileSystemRights]::FullControl -and
-  -not $rules[0].IsInherited -and
-  $rules[0].InheritanceFlags -eq $inheritance -and
-  $rules[0].PropagationFlags -eq [Security.AccessControl.PropagationFlags]::None
+$valid = Test-ExactCurrentUserAcl $actual $current $inheritance
 @{ verified = [bool]$valid } | ConvertTo-Json -Compress
 `;
 
@@ -462,15 +616,48 @@ function createPowerShellAclController({ execute = runPowerShellJson } = {}) {
   });
 }
 
+function createPowerShellAclControllerSync({ execute = runPowerShellJsonSync } = {}) {
+  if (typeof execute !== 'function') fail('WINDOWS_ACL_OPERATION_FAILED');
+  return Object.freeze({
+    restrict({ kind, target }) {
+      try {
+        const result = execute({
+          input: { kind, target },
+          script: ACL_SCRIPT,
+        });
+        if (
+          result !== null &&
+          (typeof result === 'object' || typeof result === 'function') &&
+          typeof result.then === 'function'
+        ) {
+          Promise.resolve(result).catch(() => {});
+          fail('WINDOWS_ACL_OPERATION_FAILED');
+        }
+        return { verified: result?.verified === true };
+      } catch {
+        fail('WINDOWS_ACL_OPERATION_FAILED');
+      }
+    },
+  });
+}
+
 function createAdapters(options, protection) {
   const localAppData = validateOptions(options);
   const filesystem = options.filesystem ?? defaultFilesystem;
   validateFilesystem(filesystem);
   const storageRoot = resolve(localAppData, 'easy-rewind', 'runtime');
   const aclController = options.aclController ?? createPowerShellAclController(options.powershell);
+  const syncFilesystem = options.syncFilesystem ?? defaultSyncFilesystem;
+  validateSyncFilesystem(syncFilesystem);
+  const syncAclController = options.syncAclController ?? createPowerShellAclControllerSync(options.powershellSync);
   const filePermissions = createWindowsFilePermissions({
     aclController,
     filesystem,
+    trustedRoot: storageRoot,
+  });
+  const artifactFilePermissions = createWindowsArtifactFilePermissions({
+    aclController: syncAclController,
+    filesystem: syncFilesystem,
     trustedRoot: storageRoot,
   });
   const secretStoreAdapter = createProtectedSecretAdapter({
@@ -479,7 +666,7 @@ function createAdapters(options, protection) {
     protection,
     storageRoot,
   });
-  return Object.freeze({ filePermissions, secretStoreAdapter, storageRoot });
+  return Object.freeze({ artifactFilePermissions, filePermissions, secretStoreAdapter, storageRoot });
 }
 
 function createWindowsPlatformAdapters(options = {}) {
@@ -505,7 +692,9 @@ module.exports = {
   WindowsPlatformAdapterError,
   createDpapiProtection,
   createPowerShellAclController,
+  createPowerShellAclControllerSync,
   createStandaloneWindowsPlatformAdapters,
   createWindowsPlatformAdapters,
   runPowerShellJson,
+  runPowerShellJsonSync,
 };

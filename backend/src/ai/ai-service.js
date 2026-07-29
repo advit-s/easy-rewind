@@ -30,6 +30,13 @@ function delimitUntrustedContent(content) {
   return `${BEGIN_UNTRUSTED}\n${neutralized}\n${END_UNTRUSTED}`;
 }
 
+function ensureDelimitedUntrustedContent(content) {
+  if (content.startsWith(`${BEGIN_UNTRUSTED}\n`) && content.endsWith(`\n${END_UNTRUSTED}`)) {
+    return content;
+  }
+  return delimitUntrustedContent(content);
+}
+
 function structuredResult(value) {
   if (
     value === null ||
@@ -85,7 +92,7 @@ function createAiService({ registry, jobs, now } = {}) {
     ) {
       fail('REPOSITORY_INPUT_INVALID');
     }
-    const configuration = await registry.status({ provider, model });
+    const configuration = await registry.status({ profileId, provider, model });
     if (configuration.state !== 'configured') {
       return Object.freeze({
         model,
@@ -104,6 +111,7 @@ function createAiService({ registry, jobs, now } = {}) {
         model,
         operation,
         prompt,
+        profileId,
         provider,
         untrustedContent: delimitUntrustedContent(untrustedContent),
       },
@@ -116,6 +124,7 @@ function createAiService({ registry, jobs, now } = {}) {
     if (
       payload === null ||
       typeof payload !== 'object' ||
+      !identifier(payload.profileId) ||
       !identifier(payload.provider) ||
       !identifier(payload.model) ||
       !ALLOWED_OPERATIONS.has(payload.operation) ||
@@ -129,12 +138,16 @@ function createAiService({ registry, jobs, now } = {}) {
     }
     try {
       const result = await registry.generate(
-        { provider: payload.provider, model: payload.model },
+        {
+          profileId: payload.profileId,
+          provider: payload.provider,
+          model: payload.model,
+        },
         {
           operation: payload.operation,
           prompt: payload.prompt,
           signal,
-          untrustedContent: payload.untrustedContent,
+          untrustedContent: ensureDelimitedUntrustedContent(payload.untrustedContent),
         }
       );
       if (signal?.aborted) return Object.freeze({ state: 'cancelled' });

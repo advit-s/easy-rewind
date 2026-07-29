@@ -1,0 +1,31 @@
+{
+  "cli": {
+    "version": ">=16.0.0",
+    "appVersionSource": "local",
+    "requireCommit": true
+  },
+  "build": {
+    "base": {
+      "node": "24.18.0",
+      "env": {
+        "EASY_REWIND_PAIRING_MODE": "lan",
+        "EASY_REWIND_PAIRING_ENDPOINT_SOURCE": "qr-runtime"
+      }
+    },
+    "preview": {
+      "extends": "base",
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk"
+      }
+    },
+    "production": {
+      "extends": "base",
+      "distribution": "store",
+      "autoIncrement": false,
+      "android": {
+        "buildType": "app-bundle"
+      }
+    }
+  }
+}

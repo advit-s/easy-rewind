@@ -62,6 +62,7 @@ test('provider configuration validates allowlists and never echoes credentials',
   const apiKey = 'replacement-key-must-never-be-returned';
 
   const configured = await context.registry.configure({
+    profileId: 'profile-one',
     provider: 'gemini',
     model: 'gemini-2.5-flash',
     apiKey,
@@ -72,18 +73,38 @@ test('provider configuration validates allowlists and never echoes credentials',
     state: 'configured',
   });
   assert.doesNotMatch(JSON.stringify(configured), new RegExp(apiKey));
-  assert.equal((await context.registry.status(configured)).state, 'configured');
+  assert.equal(
+    (
+      await context.registry.status({
+        ...configured,
+        profileId: 'profile-one',
+      })
+    ).state,
+    'configured'
+  );
 
-  const tested = await context.registry.test(configured);
+  const tested = await context.registry.test({
+    ...configured,
+    profileId: 'profile-one',
+  });
   assert.equal(tested.state, 'configured');
   assert.equal(context.providerCalls[0][1], apiKey);
   assert.doesNotMatch(JSON.stringify(tested), new RegExp(apiKey));
 
-  await context.registry.clear(configured);
-  assert.equal((await context.registry.status(configured)).state, 'not_configured');
+  await context.registry.clear({ ...configured, profileId: 'profile-one' });
+  assert.equal(
+    (
+      await context.registry.status({
+        ...configured,
+        profileId: 'profile-one',
+      })
+    ).state,
+    'not_configured'
+  );
 
   await assert.rejects(
     context.registry.configure({
+      profileId: 'profile-one',
       provider: 'gemini',
       model: 'made-up-model',
       apiKey,
@@ -96,19 +117,52 @@ test('provider configuration validates allowlists and never echoes credentials',
 test('credential rotation replaces protected storage without exposing either key', async () => {
   const context = fixture();
   await context.registry.configure({
+    profileId: 'profile-one',
     provider: 'gemini',
     model: 'gemini-2.5-flash',
     apiKey: 'old-private-key',
   });
 
   const result = await context.registry.rotate({
+    profileId: 'profile-one',
     provider: 'gemini',
     model: 'gemini-2.5-flash',
     apiKey: 'new-private-key',
   });
 
-  assert.equal(context.secrets.get('ai/gemini/api-key'), 'new-private-key');
+  assert.equal(context.secrets.get('ai/profile-one/gemini/api-key'), 'new-private-key');
   assert.doesNotMatch(JSON.stringify(result), /old-private-key|new-private-key/);
+});
+
+test('provider credentials remain isolated by owner profile', async () => {
+  const context = fixture();
+  await context.registry.configure({
+    profileId: 'profile-one',
+    provider: 'gemini',
+    model: 'gemini-2.5-flash',
+    apiKey: 'profile-one-key',
+  });
+
+  assert.equal(
+    (
+      await context.registry.status({
+        profileId: 'profile-one',
+        provider: 'gemini',
+        model: 'gemini-2.5-flash',
+      })
+    ).state,
+    'configured'
+  );
+  assert.equal(
+    (
+      await context.registry.status({
+        profileId: 'profile-two',
+        provider: 'gemini',
+        model: 'gemini-2.5-flash',
+      })
+    ).state,
+    'not_configured'
+  );
 });
 
 test('AI queueing is truthful when configuration is missing', async () => {
@@ -135,6 +189,7 @@ test('AI queueing is truthful when configuration is missing', async () => {
 test('configured AI queues bounded delimited content without provider credentials', async () => {
   const context = fixture();
   await context.registry.configure({
+    profileId: 'profile-one',
     provider: 'gemini',
     model: 'gemini-2.5-flash',
     apiKey: 'private-key',
@@ -174,11 +229,13 @@ test('configured AI queues bounded delimited content without provider credential
 test('execution validates structured provider output and reports failure or cancellation truthfully', async () => {
   const context = fixture();
   await context.registry.configure({
+    profileId: 'profile-one',
     provider: 'gemini',
     model: 'gemini-2.5-flash',
     apiKey: 'private-key',
   });
   const payload = {
+    profileId: 'profile-one',
     provider: 'gemini',
     model: 'gemini-2.5-flash',
     operation: 'summarize',
@@ -190,6 +247,13 @@ test('execution validates structured provider output and reports failure or canc
     result: { summary: 'Grounded summary', tags: ['local-first'] },
     state: 'completed',
   });
+  await context.service.execute(
+    { ...payload, untrustedContent: '<p>remote source</p>' },
+    { signal: new AbortController().signal }
+  );
+  const generatedRequest = context.providerCalls.at(-1)[1];
+  assert.match(generatedRequest.untrustedContent, /^--- BEGIN UNTRUSTED CONTENT ---\n/);
+  assert.match(generatedRequest.untrustedContent, /\n--- END UNTRUSTED CONTENT ---$/);
 
   const broken = createAiService({
     registry: {

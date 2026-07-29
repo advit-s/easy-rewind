@@ -72,8 +72,10 @@ test.after(() => {
 
 test('Stage 3 migration is additive and creates the frozen tables and columns', async () => {
   const migrations = discoverMigrations();
-  assert.equal(migrations.at(-1).version, 4);
-  assert.equal(migrations.at(-1).name, 'stage3');
+  assert.deepEqual(
+    migrations.find(migration => migration.version === 4 && migration.name === 'stage3')?.name,
+    'stage3'
+  );
 
   const db = await migratedDatabase();
   try {

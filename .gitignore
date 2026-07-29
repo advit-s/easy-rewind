@@ -4,6 +4,10 @@ node_modules/
 .npm-cache/
 .yarn/
 .pnpm-store/
+.expo/
+**/.expo/
+.expo-*/
+**/.expo-*/
 
 # Credentials and local configuration
 .env

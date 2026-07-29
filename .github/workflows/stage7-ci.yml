@@ -1,0 +1,240 @@
+name: Stage 7 CI
+
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stage7-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CI: true
+
+jobs:
+  quality:
+    name: Format, lint, secrets, hygiene, and audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out source
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up exact Node.js with npm download cache
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Verify exact Node and npm
+        shell: pwsh
+        run: |
+          if ((node --version) -ne 'v24.18.0') { throw 'Unexpected Node version.' }
+          if ((npm --version) -ne '11.6.2') { throw 'Unexpected npm version.' }
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Check formatting
+        run: npm run format:check
+      - name: Lint with zero warnings
+        run: npm run lint
+      - name: Scan source for secrets
+        run: npm run scan:secrets
+      - name: Enforce repository hygiene
+        run: npm run check:hygiene
+      - name: Audit production dependencies
+        run: npm run audit:production
+      - name: Run workspace and containment contracts
+        run: npm run test:workspace && npm run test:containment && npm run test:hygiene
+
+  backend:
+    name: Backend, contracts, migrations, domain, and sync
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up exact Node.js with npm download cache
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Verify exact Node and npm
+        shell: pwsh
+        run: |
+          if ((node --version) -ne 'v24.18.0') { throw 'Unexpected Node version.' }
+          if ((npm --version) -ne '11.6.2') { throw 'Unexpected npm version.' }
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run disposable legacy-safe backend suite
+        run: npm run test:backend:legacy-safe
+      - name: Verify frozen API contracts
+        run: npm run test:contracts
+      - name: Verify canonical migrations
+        run: npm run test:migrations
+      - name: Verify domain behavior
+        run: npm run test:domain
+      - name: Verify jobs and schedulers
+        run: npm run test:jobs
+      - name: Verify remote adapters and import/export
+        run: npm run test:remote && npm run test:import-export
+      - name: Verify synchronization convergence
+        run: npm run test:sync
+      - name: Run complete backend suite
+        run: npm run test:backend
+
+  clients:
+    name: Extension, dashboard, and Android client
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      - name: Check out source
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up exact Node.js with npm download cache
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Verify exact Node and npm
+        shell: pwsh
+        run: |
+          if ((node --version) -ne 'v24.18.0') { throw 'Unexpected Node version.' }
+          if ((npm --version) -ne '11.6.2') { throw 'Unexpected npm version.' }
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Test and validate Chrome extension
+        run: npm run test:extension && npm run validate:extension
+      - name: Build inspected extension directory
+        run: node scripts/validation/validate-extension.mjs --package-output .ci-artifacts/clients/extension
+      - name: Test and validate dashboard
+        run: npm run test:dashboard && npm run validate:dashboard
+      - name: Test, typecheck, and validate Android client
+        run: npm run test:mobile && npm run test:android-release && npm run mobile:typecheck && npm run validate:mobile && npm run validate:android-release
+      - name: Export Android JavaScript bundle
+        run: npm exec --workspace=@easy-rewind/mobile -- expo export --platform android --output-dir ../.ci-artifacts/clients/android-js
+      - name: Inspect client build content before upload
+        run: node scripts/validation/stage7-ci-artifacts.mjs --input .ci-artifacts/clients --output .ci-artifacts/client-evidence
+      - name: Upload inspected client build inputs
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: client-builds-non-release
+          path: |
+            .ci-artifacts/clients
+            .ci-artifacts/client-evidence
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 9
+
+  electron-package:
+    name: Electron ABI and Windows package
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out source
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up exact Node.js with npm download cache
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Verify exact Node and npm
+        shell: pwsh
+        run: |
+          if ((node --version) -ne 'v24.18.0') { throw 'Unexpected Node version.' }
+          if ((npm --version) -ne '11.6.2') { throw 'Unexpected npm version.' }
+      - name: Install locked dependencies
+        run: npm ci
+      - name: Run Electron lifecycle tests
+        shell: pwsh
+        run: node --test desktop/*.test.js
+      - name: Verify package configuration
+        run: npm run test:desktop-package && npm run validate:desktop-package
+      - name: Test release artifact validator
+        run: node --test scripts/validation/validate-release-artifacts.test.mjs
+      - name: Rebuild and validate Electron native ABI
+        run: npm run validate:native
+      - name: Build unsigned Windows CI packages
+        run: npm run package:windows
+      - name: Inspect packaged ASAR, native module, and unsigned artifacts
+        run: node scripts/validation/validate-release-artifacts.mjs --write-checksums
+      - name: Stage unsigned packages as non-release artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path '.ci-artifacts/windows' -Force | Out-Null
+          $packages = @(Get-ChildItem -LiteralPath 'dist' -File | Where-Object { $_.Extension -in '.exe', '.msi' })
+          if ($packages.Count -eq 0) { throw 'No Windows package was produced.' }
+          foreach ($package in $packages) {
+            Copy-Item -LiteralPath $package.FullName -Destination '.ci-artifacts/windows' -ErrorAction Stop
+          }
+          Copy-Item -LiteralPath 'dist/SHA256SUMS.txt' -Destination '.ci-artifacts/windows' -ErrorAction Stop
+          Set-Content -LiteralPath '.ci-artifacts/windows/NON-RELEASE.txt' -Value 'Unsigned CI artifacts are not release artifacts.'
+      - name: Upload unsigned non-release Windows packages
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: windows-unsigned-non-release
+          path: .ci-artifacts/windows
+          if-no-files-found: error
+          retention-days: 3
+          compression-level: 0
+
+  artifact-checksums:
+    name: Artifact content inspection and SHA-256
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [clients, electron-package]
+    steps:
+      - name: Check out validation code
+        uses: actions/checkout@08eba0b27e820071cde6df949e0beb9ba4906955
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - name: Set up exact Node.js with npm download cache
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 24.18.0
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - name: Verify exact Node and npm
+        shell: pwsh
+        run: |
+          if ((node --version) -ne 'v24.18.0') { throw 'Unexpected Node version.' }
+          if ((npm --version) -ne '11.6.2') { throw 'Unexpected npm version.' }
+      - name: Download client builds
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        with:
+          name: client-builds-non-release
+          path: .ci-artifacts/downloaded/clients
+      - name: Download unsigned Windows builds
+        uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+        with:
+          name: windows-unsigned-non-release
+          path: .ci-artifacts/downloaded/windows
+      - name: Inspect artifact content and generate checksums
+        run: node scripts/validation/stage7-ci-artifacts.mjs --input .ci-artifacts/downloaded --output .ci-artifacts/evidence
+      - name: Upload safe checksum evidence
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f
+        with:
+          name: artifact-checksums
+          path: .ci-artifacts/evidence
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 9
