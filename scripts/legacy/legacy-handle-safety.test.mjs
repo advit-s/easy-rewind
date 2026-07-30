@@ -8,15 +8,18 @@ import { test } from 'node:test';
 const repositoryRoot = resolve(import.meta.dirname, '..', '..');
 const repositoryHelper = join(repositoryRoot, 'scripts', 'legacy', 'legacy-handle-safety.ps1');
 
-test('directory reparse policy allows only non-name-surrogate Microsoft Cloud Filter tags', () => {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-reparse-policy-'));
-  try {
-    const helperPath = join(fixtureRoot, basename(repositoryHelper));
-    copyFileSync(repositoryHelper, helperPath);
-    const driverPath = join(fixtureRoot, 'reparse-policy-driver.ps1');
-    writeFileSync(
-      driverPath,
-      `
+test(
+  'directory reparse policy allows only non-name-surrogate Microsoft Cloud Filter tags',
+  { skip: process.platform !== 'win32' },
+  () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-reparse-policy-'));
+    try {
+      const helperPath = join(fixtureRoot, basename(repositoryHelper));
+      copyFileSync(repositoryHelper, helperPath);
+      const driverPath = join(fixtureRoot, 'reparse-policy-driver.ps1');
+      writeFileSync(
+        driverPath,
+        `
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . '${helperPath.replaceAll("'", "''")}'
@@ -36,25 +39,26 @@ $tags = @(
   }
 ) | ConvertTo-Json -Compress
 `
-    );
+      );
 
-    const result = spawnSync(
-      'powershell.exe',
-      ['-NoLogo', '-NonInteractive', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', driverPath],
-      {
-        cwd: fixtureRoot,
-        encoding: 'utf8',
-        timeout: 10_000,
-      }
-    );
-    assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
-    assert.deepEqual(JSON.parse(result.stdout), [true, true, false, false, false, false]);
-  } finally {
-    rmSync(fixtureRoot, { recursive: true, force: true });
+      const result = spawnSync(
+        'powershell.exe',
+        ['-NoLogo', '-NonInteractive', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', driverPath],
+        {
+          cwd: fixtureRoot,
+          encoding: 'utf8',
+          timeout: 10_000,
+        }
+      );
+      assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+      assert.deepEqual(JSON.parse(result.stdout), [true, true, false, false, false, false]);
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   }
-});
+);
 
-test('delete-by-handle rolls back every prior disposition before close', () => {
+test('delete-by-handle rolls back every prior disposition before close', { skip: process.platform !== 'win32' }, () => {
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-handle-safety-'));
   try {
     assert.equal(existsSync(repositoryHelper), true, 'the shared native handle helper must exist');
@@ -140,16 +144,19 @@ $afterCommit = @($paths | ForEach-Object { Test-Path -LiteralPath $_ })
   }
 });
 
-test('atomic directory creation leaves no directory after post-create failure', () => {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-directory-create-'));
-  try {
-    const helperPath = join(fixtureRoot, basename(repositoryHelper));
-    copyFileSync(repositoryHelper, helperPath);
-    const createdPath = join(fixtureRoot, 'must-not-remain');
-    const driverPath = join(fixtureRoot, 'directory-create-driver.ps1');
-    writeFileSync(
-      driverPath,
-      `
+test(
+  'atomic directory creation leaves no directory after post-create failure',
+  { skip: process.platform !== 'win32' },
+  () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-directory-create-'));
+    try {
+      const helperPath = join(fixtureRoot, basename(repositoryHelper));
+      copyFileSync(repositoryHelper, helperPath);
+      const createdPath = join(fixtureRoot, 'must-not-remain');
+      const driverPath = join(fixtureRoot, 'directory-create-driver.ps1');
+      writeFileSync(
+        driverPath,
+        `
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . '${helperPath.replaceAll("'", "''")}'
@@ -174,39 +181,43 @@ try {
   existsAfterFailure = Test-Path -LiteralPath '${createdPath.replaceAll("'", "''")}'
 } | ConvertTo-Json -Compress
 `
-    );
+      );
 
-    const result = spawnSync(
-      'powershell.exe',
-      ['-NoLogo', '-NonInteractive', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', driverPath],
-      {
-        cwd: fixtureRoot,
-        encoding: 'utf8',
-        timeout: 10_000,
-      }
-    );
-    assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
-    assert.deepEqual(JSON.parse(result.stdout), { existsAfterFailure: false });
-    assert.equal(existsSync(createdPath), false);
-  } finally {
-    rmSync(fixtureRoot, { recursive: true, force: true });
+      const result = spawnSync(
+        'powershell.exe',
+        ['-NoLogo', '-NonInteractive', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', driverPath],
+        {
+          cwd: fixtureRoot,
+          encoding: 'utf8',
+          timeout: 10_000,
+        }
+      );
+      assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+      assert.deepEqual(JSON.parse(result.stdout), { existsAfterFailure: false });
+      assert.equal(existsSync(createdPath), false);
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   }
-});
+);
 
-test('relative child handles prevent parent substitution and preserve identity', () => {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-relative-open-'));
-  try {
-    const helperPath = join(fixtureRoot, basename(repositoryHelper));
-    copyFileSync(repositoryHelper, helperPath);
-    const childPath = join(fixtureRoot, 'child');
-    const renamedPath = join(fixtureRoot, 'renamed-child');
-    const payloadPath = join(childPath, 'payload.bin');
-    mkdirSync(childPath);
-    writeFileSync(payloadPath, Buffer.from([0x10, 0x20, 0x30]));
-    const driverPath = join(fixtureRoot, 'relative-open-driver.ps1');
-    writeFileSync(
-      driverPath,
-      `
+test(
+  'relative child handles prevent parent substitution and preserve identity',
+  { skip: process.platform !== 'win32' },
+  () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-relative-open-'));
+    try {
+      const helperPath = join(fixtureRoot, basename(repositoryHelper));
+      copyFileSync(repositoryHelper, helperPath);
+      const childPath = join(fixtureRoot, 'child');
+      const renamedPath = join(fixtureRoot, 'renamed-child');
+      const payloadPath = join(childPath, 'payload.bin');
+      mkdirSync(childPath);
+      writeFileSync(payloadPath, Buffer.from([0x10, 0x20, 0x30]));
+      const driverPath = join(fixtureRoot, 'relative-open-driver.ps1');
+      writeFileSync(
+        driverPath,
+        `
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 . '${helperPath.replaceAll("'", "''")}'
@@ -268,27 +279,28 @@ try {
   }
 }
 `
-    );
+      );
 
-    const result = spawnSync(
-      'powershell.exe',
-      ['-NoLogo', '-NonInteractive', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', driverPath],
-      {
-        cwd: fixtureRoot,
-        encoding: 'utf8',
-        timeout: 10_000,
-      }
-    );
-    assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
-    const output = JSON.parse(result.stdout);
-    assert.equal(output.substitutionBlocked, true);
-    assert.equal(output.sameIdentity, true);
-    assert.deepEqual(output.unsafePathRejections, [true, true, true]);
-    assert.equal(resolve(output.childPath), resolve(childPath));
-    assert.equal(resolve(output.filePath), resolve(payloadPath));
-    assert.equal(existsSync(childPath), true);
-    assert.equal(existsSync(renamedPath), false);
-  } finally {
-    rmSync(fixtureRoot, { recursive: true, force: true });
+      const result = spawnSync(
+        'powershell.exe',
+        ['-NoLogo', '-NonInteractive', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', driverPath],
+        {
+          cwd: fixtureRoot,
+          encoding: 'utf8',
+          timeout: 10_000,
+        }
+      );
+      assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+      const output = JSON.parse(result.stdout);
+      assert.equal(output.substitutionBlocked, true);
+      assert.equal(output.sameIdentity, true);
+      assert.deepEqual(output.unsafePathRejections, [true, true, true]);
+      assert.equal(resolve(output.childPath), resolve(childPath));
+      assert.equal(resolve(output.filePath), resolve(payloadPath));
+      assert.equal(existsSync(childPath), true);
+      assert.equal(existsSync(renamedPath), false);
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true });
+    }
   }
-});
+);

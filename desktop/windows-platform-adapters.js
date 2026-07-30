@@ -47,19 +47,27 @@ function validateOptions(options) {
   ) {
     fail('WINDOWS_LOCAL_APP_DATA_REQUIRED');
   }
-  const resolved = resolve(localAppData);
-  try {
-    return defaultSyncFilesystem.realpathSync(resolved);
-  } catch {
-    return resolved;
-  }
+  return resolve(localAppData);
 }
 
 function isContained(root, target) {
   const normalizedRoot = resolve(root).toLowerCase();
   const normalizedTarget = resolve(target).toLowerCase();
   const child = relative(normalizedRoot, normalizedTarget);
-  return child === '' || (child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child));
+  if (child === '' || (child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child))) {
+    return true;
+  }
+  try {
+    const canonicalRoot = defaultSyncFilesystem.realpathSync(normalizedRoot).toLowerCase();
+    const canonicalTarget = defaultSyncFilesystem.realpathSync(normalizedTarget).toLowerCase();
+    const canonicalChild = relative(canonicalRoot, canonicalTarget);
+    return (
+      canonicalChild === '' ||
+      (canonicalChild !== '..' && !canonicalChild.startsWith(`..${sep}`) && !isAbsolute(canonicalChild))
+    );
+  } catch {
+    return false;
+  }
 }
 
 function validateFilesystem(filesystem) {
@@ -128,7 +136,7 @@ async function inspectTarget(filesystem, trustedRoot, target, kind) {
   if (
     metadata.isSymbolicLink() ||
     (typeof metadata.isReparsePoint === 'function' && metadata.isReparsePoint()) ||
-    resolve(canonical).toLowerCase() !== normalizedTarget.toLowerCase() ||
+    !isContained(trustedRoot, canonical) ||
     (kind === 'directory' ? !metadata.isDirectory() : !metadata.isFile())
   ) {
     fail('WINDOWS_ACL_TARGET_INVALID');
@@ -167,7 +175,6 @@ function inspectTargetSync(filesystem, trustedRoot, target, kind) {
     typeof metadata.isFile !== 'function' ||
     metadata.isSymbolicLink() ||
     (typeof metadata.isReparsePoint === 'function' && metadata.isReparsePoint()) ||
-    resolve(canonical).toLowerCase() !== normalizedTarget.toLowerCase() ||
     !isContained(trustedRoot, canonical) ||
     (kind === 'directory' ? !metadata.isDirectory() : !metadata.isFile()) ||
     !validIdentityPart(metadata.dev) ||
