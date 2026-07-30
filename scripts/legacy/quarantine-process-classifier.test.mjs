@@ -14,7 +14,7 @@ test(
   { skip: process.platform !== 'win32' },
   () => {
     const rawFixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-classifier-'));
-    const fixtureRoot = realpathSync(rawFixtureRoot);
+    const fixtureRoot = realpathSync.native(rawFixtureRoot);
     try {
       const sourceRoot = join(fixtureRoot, 'app');
       const scriptSource = readFileSync(quarantineScript, 'utf8');

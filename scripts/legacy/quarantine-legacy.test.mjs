@@ -84,7 +84,7 @@ function assertManifestContainment(fixture, manifest) {
 
 function newFixture() {
   const rawRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-containment-'));
-  const root = realpathSync(rawRoot);
+  const root = realpathSync.native(rawRoot);
   tempRoots.push(root);
   const sourceRoot = join(root, 'repo');
   const dataRoot = join(sourceRoot, 'backend', 'data');

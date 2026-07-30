@@ -9,7 +9,7 @@ const test = require('node:test');
 
 async function createTempAppData(prefix) {
   const dir = await mkdtemp(join(tmpdir(), prefix));
-  return realpath(dir);
+  return realpathSync.native(dir);
 }
 
 const {

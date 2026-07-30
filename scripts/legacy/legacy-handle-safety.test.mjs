@@ -22,7 +22,7 @@ test(
   { skip: process.platform !== 'win32' },
   () => {
     const rawFixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-reparse-policy-'));
-    const fixtureRoot = realpathSync(rawFixtureRoot);
+    const fixtureRoot = realpathSync.native(rawFixtureRoot);
     try {
       const helperPath = join(fixtureRoot, basename(repositoryHelper));
       copyFileSync(repositoryHelper, helperPath);
@@ -70,7 +70,7 @@ $tags = @(
 
 test('delete-by-handle rolls back every prior disposition before close', { skip: process.platform !== 'win32' }, () => {
   const rawFixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-handle-safety-'));
-  const fixtureRoot = realpathSync(rawFixtureRoot);
+  const fixtureRoot = realpathSync.native(rawFixtureRoot);
   try {
     assert.equal(existsSync(repositoryHelper), true, 'the shared native handle helper must exist');
     const helperPath = join(fixtureRoot, basename(repositoryHelper));
@@ -160,7 +160,7 @@ test(
   { skip: process.platform !== 'win32' },
   () => {
     const rawFixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-directory-create-'));
-    const fixtureRoot = realpathSync(rawFixtureRoot);
+    const fixtureRoot = realpathSync.native(rawFixtureRoot);
     try {
       const helperPath = join(fixtureRoot, basename(repositoryHelper));
       copyFileSync(repositoryHelper, helperPath);
@@ -218,7 +218,7 @@ test(
   { skip: process.platform !== 'win32' },
   () => {
     const rawFixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-relative-open-'));
-    const fixtureRoot = realpathSync(rawFixtureRoot);
+    const fixtureRoot = realpathSync.native(rawFixtureRoot);
     try {
       const helperPath = join(fixtureRoot, basename(repositoryHelper));
       copyFileSync(repositoryHelper, helperPath);
