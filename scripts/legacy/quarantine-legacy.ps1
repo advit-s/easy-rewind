@@ -424,11 +424,15 @@ function Set-AndVerifyPrivateDirectoryAcl {
   $NativeHandle.ApplySecurityDescriptor(
     $security.GetSecurityDescriptorBinaryForm()
   )
-  $accessSecurity = New-Object System.Security.AccessControl.DirectorySecurity
+  $directory = Get-Item -LiteralPath $Path -Force
+  $accessSecurity = $directory.GetAccessControl()
   $accessSecurity.SetOwner($currentSid)
   $accessSecurity.SetAccessRuleProtection($true, $false)
+  # Remove explicit rules to ensure exactly one ACE
+  foreach ($existingRule in $accessSecurity.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier])) {
+    $null = $accessSecurity.RemoveAccessRule($existingRule)
+  }
   $null = $accessSecurity.AddAccessRule($rule)
-  $directory = Get-Item -LiteralPath $Path -Force
   if ($PSVersionTable.PSEdition -eq 'Core') {
     [System.IO.FileSystemAclExtensions]::SetAccessControl(
       [System.IO.DirectoryInfo]$directory,
@@ -463,11 +467,14 @@ function Set-AndVerifyPrivateFileAcl {
   $NativeHandle.ApplySecurityDescriptor(
     $security.GetSecurityDescriptorBinaryForm()
   )
-  $accessSecurity = New-Object System.Security.AccessControl.FileSecurity
+  $file = Get-Item -LiteralPath $Path -Force
+  $accessSecurity = $file.GetAccessControl()
   $accessSecurity.SetOwner($currentSid)
   $accessSecurity.SetAccessRuleProtection($true, $false)
+  foreach ($existingRule in $accessSecurity.GetAccessRules($true, $false, [System.Security.Principal.SecurityIdentifier])) {
+    $null = $accessSecurity.RemoveAccessRule($existingRule)
+  }
   $null = $accessSecurity.AddAccessRule($rule)
-  $file = Get-Item -LiteralPath $Path -Force
   if ($PSVersionTable.PSEdition -eq 'Core') {
     [System.IO.FileSystemAclExtensions]::SetAccessControl(
       [System.IO.FileInfo]$file,
