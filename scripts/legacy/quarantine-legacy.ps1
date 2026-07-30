@@ -425,6 +425,7 @@ function Set-AndVerifyPrivateDirectoryAcl {
     $security.GetSecurityDescriptorBinaryForm()
   )
   $accessSecurity = New-Object System.Security.AccessControl.DirectorySecurity
+  $accessSecurity.SetOwner($currentSid)
   $accessSecurity.SetAccessRuleProtection($true, $false)
   $null = $accessSecurity.AddAccessRule($rule)
   $directory = Get-Item -LiteralPath $Path -Force
@@ -463,6 +464,7 @@ function Set-AndVerifyPrivateFileAcl {
     $security.GetSecurityDescriptorBinaryForm()
   )
   $accessSecurity = New-Object System.Security.AccessControl.FileSecurity
+  $accessSecurity.SetOwner($currentSid)
   $accessSecurity.SetAccessRuleProtection($true, $false)
   $null = $accessSecurity.AddAccessRule($rule)
   $file = Get-Item -LiteralPath $Path -Force
