@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -13,7 +13,8 @@ test(
   'classifies confirmed candidates separately from metadata verification failures',
   { skip: process.platform !== 'win32' },
   () => {
-    const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-classifier-'));
+    const rawFixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-classifier-'));
+    const fixtureRoot = realpathSync(rawFixtureRoot);
     try {
       const sourceRoot = join(fixtureRoot, 'app');
       const scriptSource = readFileSync(quarantineScript, 'utf8');

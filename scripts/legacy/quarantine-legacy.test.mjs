@@ -9,6 +9,7 @@ import {
   mkdtempSync,
   openSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   symlinkSync,
@@ -82,7 +83,8 @@ function assertManifestContainment(fixture, manifest) {
 }
 
 function newFixture() {
-  const root = mkdtempSync(join(tmpdir(), 'easy-rewind-containment-'));
+  const rawRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-containment-'));
+  const root = realpathSync(rawRoot);
   tempRoots.push(root);
   const sourceRoot = join(root, 'repo');
   const dataRoot = join(sourceRoot, 'backend', 'data');

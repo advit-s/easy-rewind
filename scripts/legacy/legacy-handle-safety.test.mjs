@@ -1,5 +1,14 @@
 import assert from 'node:assert/strict';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -12,7 +21,8 @@ test(
   'directory reparse policy allows only non-name-surrogate Microsoft Cloud Filter tags',
   { skip: process.platform !== 'win32' },
   () => {
-    const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-reparse-policy-'));
+    const rawFixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-reparse-policy-'));
+    const fixtureRoot = realpathSync(rawFixtureRoot);
     try {
       const helperPath = join(fixtureRoot, basename(repositoryHelper));
       copyFileSync(repositoryHelper, helperPath);
@@ -59,7 +69,8 @@ $tags = @(
 );
 
 test('delete-by-handle rolls back every prior disposition before close', { skip: process.platform !== 'win32' }, () => {
-  const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-handle-safety-'));
+  const rawFixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-handle-safety-'));
+  const fixtureRoot = realpathSync(rawFixtureRoot);
   try {
     assert.equal(existsSync(repositoryHelper), true, 'the shared native handle helper must exist');
     const helperPath = join(fixtureRoot, basename(repositoryHelper));
@@ -148,7 +159,8 @@ test(
   'atomic directory creation leaves no directory after post-create failure',
   { skip: process.platform !== 'win32' },
   () => {
-    const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-directory-create-'));
+    const rawFixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-directory-create-'));
+    const fixtureRoot = realpathSync(rawFixtureRoot);
     try {
       const helperPath = join(fixtureRoot, basename(repositoryHelper));
       copyFileSync(repositoryHelper, helperPath);
@@ -205,7 +217,8 @@ test(
   'relative child handles prevent parent substitution and preserve identity',
   { skip: process.platform !== 'win32' },
   () => {
-    const fixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-relative-open-'));
+    const rawFixtureRoot = mkdtempSync(join(tmpdir(), 'easy-rewind-relative-open-'));
+    const fixtureRoot = realpathSync(rawFixtureRoot);
     try {
       const helperPath = join(fixtureRoot, basename(repositoryHelper));
       copyFileSync(repositoryHelper, helperPath);

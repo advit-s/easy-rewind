@@ -2,10 +2,15 @@
 
 const assert = require('node:assert/strict');
 const { lstatSync, mkdirSync, realpathSync, symlinkSync, unlinkSync, writeFileSync } = require('node:fs');
-const { mkdtemp, readFile, readdir, rm } = require('node:fs/promises');
+const { mkdtemp, readFile, readdir, realpath, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');
 const { join, resolve } = require('node:path');
 const test = require('node:test');
+
+async function createTempAppData(prefix) {
+  const dir = await mkdtemp(join(tmpdir(), prefix));
+  return realpath(dir);
+}
 
 const {
   WindowsPlatformAdapterError,
@@ -61,7 +66,7 @@ function fakeSyncAclController(events) {
 }
 
 test('Electron adapters keep runtime data under LOCALAPPDATA and persist only safeStorage ciphertext', async t => {
-  const localAppData = await mkdtemp(join(tmpdir(), 'easy-rewind-platform-electron-'));
+  const localAppData = await createTempAppData('easy-rewind-platform-electron-');
   t.after(() => rm(localAppData, { force: true, recursive: true }));
   const aclEvents = [];
   const adapters = createWindowsPlatformAdapters({
@@ -89,7 +94,7 @@ test('Electron adapters keep runtime data under LOCALAPPDATA and persist only sa
 });
 
 test('standalone adapters round-trip text and binary values through injected current-user DPAPI', async t => {
-  const localAppData = await mkdtemp(join(tmpdir(), 'easy-rewind-platform-standalone-'));
+  const localAppData = await createTempAppData('easy-rewind-platform-standalone-');
   t.after(() => rm(localAppData, { force: true, recursive: true }));
   const adapters = createStandaloneWindowsPlatformAdapters({
     aclController: fakeAclController([]),
@@ -109,7 +114,7 @@ test('standalone adapters round-trip text and binary values through injected cur
 });
 
 test('adapter creation and operations fail closed without Windows encryption or verified ACLs', async t => {
-  const localAppData = await mkdtemp(join(tmpdir(), 'easy-rewind-platform-failure-'));
+  const localAppData = await createTempAppData('easy-rewind-platform-failure-');
   t.after(() => rm(localAppData, { force: true, recursive: true }));
 
   for (const create of [
@@ -158,7 +163,7 @@ test('adapter creation and operations fail closed without Windows encryption or 
 });
 
 test('secret filenames do not expose logical names and repeated writes keep one protected target', async t => {
-  const localAppData = await mkdtemp(join(tmpdir(), 'easy-rewind-platform-idempotent-'));
+  const localAppData = await createTempAppData('easy-rewind-platform-idempotent-');
   t.after(() => rm(localAppData, { force: true, recursive: true }));
   const events = [];
   const adapters = createStandaloneWindowsPlatformAdapters({
@@ -182,7 +187,7 @@ test('secret filenames do not expose logical names and repeated writes keep one 
 });
 
 test('permission adapter rejects paths outside its trusted runtime root before invoking ACL mutation', async t => {
-  const localAppData = await mkdtemp(join(tmpdir(), 'easy-rewind-platform-boundary-'));
+  const localAppData = await createTempAppData('easy-rewind-platform-boundary-');
   t.after(() => rm(localAppData, { force: true, recursive: true }));
   const events = [];
   const adapters = createStandaloneWindowsPlatformAdapters({
@@ -242,7 +247,7 @@ test('ACL command reads only non-audit sections and short-circuits an already ex
 });
 
 test('artifact permissions synchronously restrict a runtime file and preserve its identity', async t => {
-  const localAppData = await mkdtemp(join(tmpdir(), 'easy-rewind-platform-artifact-'));
+  const localAppData = await createTempAppData('easy-rewind-platform-artifact-');
   t.after(() => rm(localAppData, { force: true, recursive: true }));
   const events = [];
   const adapters = createStandaloneWindowsPlatformAdapters({
@@ -265,7 +270,7 @@ test('artifact permissions synchronously restrict a runtime file and preserve it
 });
 
 test('artifact permissions reject outside-root and linked targets before ACL mutation', async t => {
-  const localAppData = await mkdtemp(join(tmpdir(), 'easy-rewind-platform-artifact-boundary-'));
+  const localAppData = await createTempAppData('easy-rewind-platform-artifact-boundary-');
   t.after(() => rm(localAppData, { force: true, recursive: true }));
   const events = [];
   const adapters = createStandaloneWindowsPlatformAdapters({
@@ -304,7 +309,7 @@ test('artifact permissions reject outside-root and linked targets before ACL mut
 });
 
 test('artifact permissions fail verification when ACL mutation replaces the file', async t => {
-  const localAppData = await mkdtemp(join(tmpdir(), 'easy-rewind-platform-artifact-race-'));
+  const localAppData = await createTempAppData('easy-rewind-platform-artifact-race-');
   t.after(() => rm(localAppData, { force: true, recursive: true }));
   const adapters = createStandaloneWindowsPlatformAdapters({
     aclController: fakeAclController([]),
@@ -330,7 +335,7 @@ test('artifact permissions fail verification when ACL mutation replaces the file
 });
 
 test('artifact permissions reject reparse-point metadata before ACL mutation', async t => {
-  const localAppData = await mkdtemp(join(tmpdir(), 'easy-rewind-platform-artifact-reparse-'));
+  const localAppData = await createTempAppData('easy-rewind-platform-artifact-reparse-');
   t.after(() => rm(localAppData, { force: true, recursive: true }));
   const events = [];
   const adapters = createStandaloneWindowsPlatformAdapters({
