@@ -50,24 +50,28 @@ function validateOptions(options) {
   return resolve(localAppData);
 }
 
-function isContained(root, target) {
-  const normalizedRoot = resolve(root).toLowerCase();
-  const normalizedTarget = resolve(target).toLowerCase();
-  const child = relative(normalizedRoot, normalizedTarget);
-  if (child === '' || (child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child))) {
-    return true;
-  }
+function canonicalizePath(p) {
+  const resolved = resolve(p);
   try {
-    const canonicalRoot = defaultSyncFilesystem.realpathSync(normalizedRoot).toLowerCase();
-    const canonicalTarget = defaultSyncFilesystem.realpathSync(normalizedTarget).toLowerCase();
-    const canonicalChild = relative(canonicalRoot, canonicalTarget);
-    return (
-      canonicalChild === '' ||
-      (canonicalChild !== '..' && !canonicalChild.startsWith(`..${sep}`) && !isAbsolute(canonicalChild))
-    );
+    return defaultSyncFilesystem.realpathSync(resolved);
   } catch {
-    return false;
+    const parent = resolve(resolved, '..');
+    if (parent !== resolved) {
+      return resolve(canonicalizePath(parent), relative(parent, resolved));
+    }
+    return resolved;
   }
+}
+
+function isSamePath(path1, path2) {
+  return canonicalizePath(path1).toLowerCase() === canonicalizePath(path2).toLowerCase();
+}
+
+function isContained(root, target) {
+  const canonicalRoot = canonicalizePath(root).toLowerCase();
+  const canonicalTarget = canonicalizePath(target).toLowerCase();
+  const child = relative(canonicalRoot, canonicalTarget);
+  return child === '' || (child !== '..' && !child.startsWith(`..${sep}`) && !isAbsolute(child));
 }
 
 function validateFilesystem(filesystem) {
@@ -136,6 +140,7 @@ async function inspectTarget(filesystem, trustedRoot, target, kind) {
   if (
     metadata.isSymbolicLink() ||
     (typeof metadata.isReparsePoint === 'function' && metadata.isReparsePoint()) ||
+    !isSamePath(canonical, normalizedTarget) ||
     !isContained(trustedRoot, canonical) ||
     (kind === 'directory' ? !metadata.isDirectory() : !metadata.isFile())
   ) {
@@ -175,6 +180,7 @@ function inspectTargetSync(filesystem, trustedRoot, target, kind) {
     typeof metadata.isFile !== 'function' ||
     metadata.isSymbolicLink() ||
     (typeof metadata.isReparsePoint === 'function' && metadata.isReparsePoint()) ||
+    !isSamePath(canonical, normalizedTarget) ||
     !isContained(trustedRoot, canonical) ||
     (kind === 'directory' ? !metadata.isDirectory() : !metadata.isFile()) ||
     !validIdentityPart(metadata.dev) ||
