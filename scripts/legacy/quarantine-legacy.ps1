@@ -8,6 +8,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'legacy-handle-safety.ps1')
+Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 
 $requiredNames = @(
   'easy-rewind.db',

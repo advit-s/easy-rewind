@@ -588,8 +588,8 @@ test(
     const sentinelPath = join(destination, 'injected-untracked.txt');
     const localScript = fixtureLocalScript(fixture, repositoryQuarantineScript);
     const scriptSource = readFileSync(localScript, 'utf8');
-    const injectionMarker = '  Set-AndVerifyPrivateDirectoryAcl `';
-    assert.equal(scriptSource.includes(injectionMarker), true, 'quarantine ACL marker must remain injectable');
+    const injectionMarker = '  $manifest = [ordered]@{';
+    assert.equal(scriptSource.includes(injectionMarker), true, 'quarantine manifest marker must remain injectable');
     writeFileSync(
       localScript,
       scriptSource.replace(
