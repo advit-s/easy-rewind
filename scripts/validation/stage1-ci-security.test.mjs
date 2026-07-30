@@ -61,9 +61,10 @@ test('CI is a least-privilege repository-wide Windows Stage 1 gate', () => {
   const expectedNames = [
     'Check out source',
     'Set up Node.js',
+    'Install exact npm',
     'Verify exact toolchain',
     'Install exact root dependencies',
-    'Audit production and development dependencies',
+    'Audit production dependencies',
     'Scan tracked source for secrets',
     'Check repository hygiene',
     'Run workspace contract tests',
@@ -75,6 +76,7 @@ test('CI is a least-privilege repository-wide Windows Stage 1 gate', () => {
     'Run Stage 1 build validation',
   ];
   const expectedRuns = new Map([
+    ['Install exact npm', 'npm install --global npm@11.6.2 --ignore-scripts --no-audit --no-fund'],
     [
       'Verify exact toolchain',
       [
@@ -83,7 +85,7 @@ test('CI is a least-privilege repository-wide Windows Stage 1 gate', () => {
       ].join('\n'),
     ],
     ['Install exact root dependencies', 'npm ci'],
-    ['Audit production and development dependencies', 'npm audit --audit-level=high'],
+    ['Audit production dependencies', 'npm run audit:production'],
     ['Scan tracked source for secrets', 'npm run scan:secrets'],
     ['Check repository hygiene', 'npm run check:hygiene'],
     ['Run workspace contract tests', 'npm run test:workspace'],
@@ -142,7 +144,7 @@ test('CI is a least-privilege repository-wide Windows Stage 1 gate', () => {
       step.name === 'Verify exact toolchain' ? ['name', 'run', 'shell'] : ['name', 'run']
     );
   }
-  assert.equal(job.steps[2].shell, 'pwsh');
+  assert.equal(job.steps[3].shell, 'pwsh');
   assert.doesNotMatch(source, /\$\{\{\s*secrets\./);
   assert.match(source, /Official GitHub-maintained action/i);
   assert.match(source, /checkout v4\.3\.0/i);

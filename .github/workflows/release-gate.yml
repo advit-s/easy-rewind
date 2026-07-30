@@ -39,6 +39,8 @@ jobs:
           node-version: 24.18.0
           cache: npm
           cache-dependency-path: package-lock.json
+      - name: Install exact npm
+        run: npm install --global npm@11.6.2 --ignore-scripts --no-audit --no-fund
       - name: Verify exact Node and npm
         shell: pwsh
         run: |
@@ -96,6 +98,8 @@ jobs:
           node-version: 24.18.0
           cache: npm
           cache-dependency-path: package-lock.json
+      - name: Install exact npm
+        run: npm install --global npm@11.6.2 --ignore-scripts --no-audit --no-fund
       - name: Verify exact Node and npm
         shell: pwsh
         run: |

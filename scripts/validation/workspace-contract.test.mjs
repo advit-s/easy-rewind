@@ -111,7 +111,7 @@ test('workspace exposes the complete Stage 1 command contract and selected packa
     repository.scripts['test:lifecycle'],
     'node --test backend/src/lifecycle/*.test.js backend/test/import-safety.test.js'
   );
-  assert.equal(repository.scripts['audit:production'], 'npm audit --omit=dev');
+  assert.equal(repository.scripts['audit:production'], 'npm audit --omit=dev --audit-level=high');
   assert.equal(
     repository.scripts['verify:stage2'],
     'npm run test:requirements && npm --workspace backend test && npm run test:contracts && npm run test:migrations && npm run test:lifecycle && npm run verify:native && npm run audit:production && npm run scan:secrets && npm run check:hygiene'

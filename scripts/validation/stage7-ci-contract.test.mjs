@@ -41,10 +41,28 @@ function assertPinnedActions(workflow) {
 }
 
 function assertExactToolchain(workflow, minimumSetupCount) {
-  for (const setup of setupNodeSteps(workflow)) {
+  for (const [jobName, job] of Object.entries(workflow.jobs)) {
+    const setupIndex = (job.steps ?? []).findIndex(step => String(step.uses ?? '').startsWith('actions/setup-node@'));
+    if (setupIndex < 0) continue;
+
+    const setup = job.steps[setupIndex];
     assert.equal(setup.with?.['node-version'], '24.18.0');
     assert.equal(setup.with?.cache, 'npm');
     assert.equal(setup.with?.['cache-dependency-path'], 'package-lock.json');
+
+    assert.deepEqual(
+      job.steps[setupIndex + 1],
+      {
+        name: 'Install exact npm',
+        run: 'npm install --global npm@11.6.2 --ignore-scripts --no-audit --no-fund',
+      },
+      `${jobName} must install the pinned npm immediately after setup-node`
+    );
+    assert.match(
+      String(job.steps[setupIndex + 2]?.name ?? ''),
+      /^Verify exact Node and npm$/u,
+      `${jobName} must verify the toolchain after installing the pinned npm`
+    );
   }
   assert.ok(setupNodeSteps(workflow).length >= minimumSetupCount, 'each independent validation lane must set up Node');
   assert.match(allRunSource(workflow), /npm --version[\s\S]*11\.6\.2|11\.6\.2[\s\S]*npm --version/u);

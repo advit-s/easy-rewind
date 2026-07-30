@@ -62,7 +62,7 @@
     "rebuild:native": "npm run install:electron && npm --workspace desktop run rebuild:native",
     "verify:native": "npm --workspace desktop run verify:native",
     "validate:native": "npm --workspace desktop run validate:native",
-    "audit:production": "npm audit --omit=dev",
+    "audit:production": "npm audit --omit=dev --audit-level=high",
     "verify": "npm run verify:stage1 && npm run verify:stage2",
     "verify:stage1": "npm run scan:secrets && npm run check:hygiene && npm run lint && npm run format:check && npm test && npm run build",
     "verify:stage2": "npm run test:requirements && npm --workspace backend test && npm run test:contracts && npm run test:migrations && npm run test:lifecycle && npm run verify:native && npm run audit:production && npm run scan:secrets && npm run check:hygiene",

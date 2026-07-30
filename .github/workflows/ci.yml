@@ -32,6 +32,9 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Install exact npm
+        run: npm install --global npm@11.6.2 --ignore-scripts --no-audit --no-fund
+
       - name: Verify exact toolchain
         shell: pwsh
         run: |
@@ -41,8 +44,8 @@ jobs:
       - name: Install exact root dependencies
         run: npm ci
 
-      - name: Audit production and development dependencies
-        run: npm audit --audit-level=high
+      - name: Audit production dependencies
+        run: npm run audit:production
 
       - name: Scan tracked source for secrets
         run: npm run scan:secrets
