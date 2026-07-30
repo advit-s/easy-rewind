@@ -141,15 +141,49 @@ function validatePowerShellResult(result) {
   return result;
 }
 
+const DEFAULT_POWERSHELL_TIMEOUT = Number(process.env.TEST_POWERSHELL_TIMEOUT ?? 60_000);
+
+function makePowerShellEnv(fixture) {
+  return { ...process.env, LOCALAPPDATA: fixture.localAppData };
+}
+
+function trySpawn(exe, args, options) {
+  return spawnSync(exe, args, options);
+}
+
 function spawnPowerShell(fixture, args) {
-  return validatePowerShellResult(
-    spawnSync('powershell.exe', args, {
-      cwd: fixture.root,
-      encoding: 'utf8',
-      env: { ...process.env, LOCALAPPDATA: fixture.localAppData },
-      timeout: 30_000,
-    })
-  );
+  const candidates = process.env.TEST_POWERSHELL_EXE
+    ? [process.env.TEST_POWERSHELL_EXE]
+    : process.platform === 'win32'
+    ? ['powershell.exe', 'pwsh']
+    : ['pwsh', 'powershell'];
+
+  const env = makePowerShellEnv(fixture);
+  const baseOptions = {
+    cwd: fixture.root,
+    encoding: 'utf8',
+    env,
+    timeout: DEFAULT_POWERSHELL_TIMEOUT,
+  };
+
+  let lastResult = null;
+
+  for (const exe of candidates) {
+    lastResult = trySpawn(exe, args, baseOptions);
+    if (!lastResult.error || lastResult.error.code !== 'ETIMEDOUT') {
+      return validatePowerShellResult(lastResult);
+    }
+
+    const retryOptions = { ...baseOptions, timeout: Math.max(baseOptions.timeout * 2, 120_000) };
+    lastResult = trySpawn(exe, args, retryOptions);
+    if (!lastResult.error || lastResult.error.code !== 'ETIMEDOUT') {
+      return validatePowerShellResult(lastResult);
+    }
+  }
+
+  const errMessage = lastResult?.error?.message ?? 'unknown';
+  const diag = diagnostic(lastResult ?? { status: null, signal: null, stdout: '', stderr: '' });
+  throw new Error(`PowerShell failed to start (${errMessage}). Tried: ${candidates.join(', ')}\n${diag}`);
 }
 
 function runPowerShell(fixture, repositoryScript, args) {
