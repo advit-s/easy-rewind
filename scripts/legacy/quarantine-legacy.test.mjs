@@ -269,7 +269,7 @@ afterEach(() => {
   const cleanupFailures = [];
   for (const root of tempRoots.splice(0)) {
     try {
-      assertPathWithin(root, tmpdir(), 'fixture root');
+      assertPathWithin(root, realpathSync.native(tmpdir()), 'fixture root');
       rmSync(root, { recursive: true, force: true });
       assert.equal(existsSync(root), false, `fixture root was not removed: ${root}`);
     } catch (error) {
