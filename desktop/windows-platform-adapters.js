@@ -47,7 +47,12 @@ function validateOptions(options) {
   ) {
     fail('WINDOWS_LOCAL_APP_DATA_REQUIRED');
   }
-  return resolve(localAppData);
+  const resolved = resolve(localAppData);
+  try {
+    return defaultSyncFilesystem.realpathSync(resolved);
+  } catch {
+    return resolved;
+  }
 }
 
 function isContained(root, target) {

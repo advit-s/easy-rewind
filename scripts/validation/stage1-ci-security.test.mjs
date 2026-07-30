@@ -22,7 +22,16 @@ function read(relativePath) {
   return readFileSync(join(root, relativePath), 'utf8');
 }
 
-function parsePowerShell(source) {
+function powershellExecutable(environment = process.env) {
+  const systemRoot = environment.SystemRoot || environment.SYSTEMROOT;
+  if (typeof systemRoot === 'string' && systemRoot.length > 0) {
+    const candidate = resolve(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+    if (existsSync(candidate)) return candidate;
+  }
+  return 'powershell.exe';
+}
+
+function parsePowerShell(source, executable = powershellExecutable()) {
   const command = [
     '$source = [Console]::In.ReadToEnd()',
     '$tokens = $null',
@@ -31,7 +40,7 @@ function parsePowerShell(source) {
     'if ($errors.Count -gt 0) { $errors | ForEach-Object { [Console]::Error.WriteLine($_.ErrorId) }; exit 1 }',
   ].join('; ');
   return spawnSync(
-    'powershell.exe',
+    executable,
     ['-NoLogo', '-NoProfile', '-NonInteractive', '-EncodedCommand', Buffer.from(command, 'utf16le').toString('base64')],
     {
       cwd: root,
@@ -455,7 +464,7 @@ test(
   }
 );
 
-test('every PowerShell history-remediation block parses without errors', () => {
+test('every PowerShell history-remediation block parses without errors', { skip: process.platform !== 'win32' }, () => {
   const guide = read('docs/security/git-history-remediation.md');
   const blocks = [...guide.matchAll(/```powershell\s*\r?\n([\s\S]*?)```/gi)].map(match => match[1]);
 
