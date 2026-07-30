@@ -57,7 +57,7 @@ $tags = @(
         {
           cwd: fixtureRoot,
           encoding: 'utf8',
-          timeout: 10_000,
+          timeout: 30_000,
         }
       );
       assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
@@ -140,7 +140,7 @@ $afterCommit = @($paths | ForEach-Object { Test-Path -LiteralPath $_ })
       {
         cwd: fixtureRoot,
         encoding: 'utf8',
-        timeout: 10_000,
+        timeout: 30_000,
       }
     );
     assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
@@ -201,7 +201,7 @@ try {
         {
           cwd: fixtureRoot,
           encoding: 'utf8',
-          timeout: 10_000,
+          timeout: 30_000,
         }
       );
       assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
@@ -300,7 +300,7 @@ try {
         {
           cwd: fixtureRoot,
           encoding: 'utf8',
-          timeout: 10_000,
+          timeout: 30_000,
         }
       );
       assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);

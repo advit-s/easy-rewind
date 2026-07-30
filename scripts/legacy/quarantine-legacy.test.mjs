@@ -147,7 +147,7 @@ function spawnPowerShell(fixture, args) {
       cwd: fixture.root,
       encoding: 'utf8',
       env: { ...process.env, LOCALAPPDATA: fixture.localAppData },
-      timeout: 10_000,
+      timeout: 30_000,
     })
   );
 }

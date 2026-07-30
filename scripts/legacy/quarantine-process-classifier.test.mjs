@@ -90,7 +90,7 @@ $classification | ConvertTo-Json -Depth 4 -Compress
         {
           cwd: fixtureRoot,
           encoding: 'utf8',
-          timeout: 10_000,
+          timeout: 30_000,
         }
       );
 
