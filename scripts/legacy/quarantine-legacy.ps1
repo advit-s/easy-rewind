@@ -8,7 +8,6 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'legacy-handle-safety.ps1')
-Import-Module Microsoft.PowerShell.Security -ErrorAction Stop
 
 $requiredNames = @(
   'easy-rewind.db',
@@ -486,7 +485,7 @@ function Assert-ExactPrivateAcl {
     [System.Security.Principal.SecurityIdentifier]$CurrentSid
   )
 
-  $verified = Get-Acl -LiteralPath $Path
+  $verified = (Get-Item -LiteralPath $Path -Force).GetAccessControl()
   if (-not $verified.AreAccessRulesProtected) {
     throw "Quarantine ACL inheritance is not protected: $Path"
   }
