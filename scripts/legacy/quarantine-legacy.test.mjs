@@ -155,8 +155,8 @@ function spawnPowerShell(fixture, args) {
   const candidates = process.env.TEST_POWERSHELL_EXE
     ? [process.env.TEST_POWERSHELL_EXE]
     : process.platform === 'win32'
-    ? ['powershell.exe', 'pwsh']
-    : ['pwsh', 'powershell'];
+      ? ['powershell.exe', 'pwsh']
+      : ['pwsh', 'powershell'];
 
   const env = makePowerShellEnv(fixture);
   const baseOptions = {
